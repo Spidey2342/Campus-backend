@@ -30,11 +30,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",          # local dev
-        "http://localhost:3000",          # local dev
-        "https://campus-loop-peach.vercel.app/",    # 👈 replace with your real Vercel URL
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://campus-loop-peach.vercel.app",  # your actual Vercel URL
     ],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
