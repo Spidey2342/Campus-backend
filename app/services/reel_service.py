@@ -16,6 +16,7 @@ cloudinary.config(
     api_key=os.getenv("CLOUDINARY_API_KEY"),
     api_secret=os.getenv("CLOUDINARY_API_SECRET"),
 )
+
 def upload_video_to_cloudinary(
     file_bytes: bytes,
     filename: str,
@@ -24,17 +25,14 @@ def upload_video_to_cloudinary(
     text_overlays: list = []
 ) -> dict:
     try:
-        # Build Cloudinary transformation list
         transformation = []
 
-        # Trim the video if start/end provided
         if trim_start is not None or trim_end is not None:
             trim = {}
             if trim_start: trim["start_offset"] = str(trim_start)
             if trim_end: trim["end_offset"] = str(trim_end)
             transformation.append(trim)
 
-        # Add text overlays
         for overlay in text_overlays:
             transformation.append({
                 "overlay": {
@@ -48,16 +46,29 @@ def upload_video_to_cloudinary(
                 "y": 0,
             })
 
+        # Upload params
+        upload_params = {
+            "resource_type": "video",
+            "folder": "campusvibe/reels",
+        }
+
+        # If we have transformations use eager_async
+        # This means Cloudinary processes them in the background
+        # instead of making the user wait
+        if transformation:
+            upload_params["eager"] = transformation
+            upload_params["eager_async"] = True  # 👈 process in background
+        
         result = cloudinary.uploader.upload(
             file_bytes,
-            resource_type="video",
-            folder="campusvibe/reels",
-            transformation=transformation if transformation else None,
+            **upload_params
         )
 
         video_url = result.get("secure_url")
         public_id = result.get("public_id")
 
+        # Thumbnail generated from the raw uploaded video
+        # not from the transformation — so it's always available immediately
         thumbnail_url = (
             f"https://res.cloudinary.com/"
             f"{os.getenv('CLOUDINARY_CLOUD_NAME')}"
@@ -74,7 +85,7 @@ def upload_video_to_cloudinary(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Video upload failed: {str(e)}"
         )
-        
+            
 def create_reel(
     db: Session,
     owner_id: str,
