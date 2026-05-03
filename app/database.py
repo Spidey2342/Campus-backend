@@ -13,7 +13,14 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 # The engine is the actual connection to PostgreSQL
 # It's like the phone line between Python and your database
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,      # tests connection before using it
+    pool_recycle=300,        # recycles connections every 5 minutes
+    connect_args={
+        "connect_timeout": 10  # timeout after 10 seconds
+    }
+)
 
 # SessionLocal is a factory that creates database sessions
 # A session is like one conversation with the database
