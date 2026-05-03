@@ -191,16 +191,6 @@ async def delete_reel(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/feed")
-async def get_reel_feed(
-    type: str = Query(default="foryou"),
-    skip: int = Query(default=0),
-    limit: int = Query(default=10),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    return get_feed(db, current_user.id, type, skip, limit)
-
 
 @router.get("/{reel_id}/comments")
 async def get_comments(
