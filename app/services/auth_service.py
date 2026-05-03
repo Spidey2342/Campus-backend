@@ -6,7 +6,7 @@ from fastapi import HTTPException, status
 from app.models.user import User
 from app.schemas.user import UserRegister
 import os
-
+import re
 # CryptContext tells passlib to use bcrypt for hashing
 # bcrypt is the industry standard — it's slow on purpose
 # slow = harder for hackers to brute force stolen passwords
@@ -44,6 +44,8 @@ def create_access_token(user_id: str) -> str:
     )
     return token
 
+
+
 def decode_access_token(token: str) -> str:
     # Decodes the token and returns the user_id
     # Raises an error if token is expired or tampered with
@@ -78,6 +80,13 @@ def get_user_by_username(db: Session, username: str):
     return db.query(User).filter(User.username == username).first()
 
 def create_user(db: Session, user_data: UserRegister):
+    # Validate username first — before any database checks
+    if not re.match(r'^[a-zA-Z0-9._]+$', user_data.username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username can only contain letters, numbers, dots and underscores. No spaces allowed."
+        )
+
     # Check if email already exists
     if get_user_by_email(db, user_data.email):
         raise HTTPException(
@@ -92,7 +101,6 @@ def create_user(db: Session, user_data: UserRegister):
             detail="Username already taken"
         )
 
-    # Create the User object — notice we hash the password
     new_user = User(
         full_name=user_data.full_name,
         username=user_data.username,
@@ -103,11 +111,7 @@ def create_user(db: Session, user_data: UserRegister):
         year_of_study=user_data.year_of_study,
     )
 
-    # db.add() stages the new user (like git add)
-    # db.commit() saves it to the database (like git commit)
-    # db.refresh() reloads the object with DB-generated fields like id
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-
     return new_user
