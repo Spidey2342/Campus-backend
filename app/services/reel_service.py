@@ -1,0 +1,393 @@
+import cloudinary
+import cloudinary.uploader
+from sqlalchemy.orm import Session
+from sqlalchemy import desc
+from fastapi import HTTPException, status
+from app.models.reel import Reel, Like, Comment, Follow
+from app.models.user import User
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configure Cloudinary with our credentials from .env
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+)
+def upload_video_to_cloudinary(
+    file_bytes: bytes,
+    filename: str,
+    trim_start: float = 0,
+    trim_end: float = None,
+    text_overlays: list = []
+) -> dict:
+    try:
+        # Build Cloudinary transformation list
+        transformation = []
+
+        # Trim the video if start/end provided
+        if trim_start is not None or trim_end is not None:
+            trim = {}
+            if trim_start: trim["start_offset"] = str(trim_start)
+            if trim_end: trim["end_offset"] = str(trim_end)
+            transformation.append(trim)
+
+        # Add text overlays
+        for overlay in text_overlays:
+            transformation.append({
+                "overlay": {
+                    "font_family": "Arial",
+                    "font_size": overlay.get("size", 24),
+                    "font_weight": "bold",
+                    "text": overlay.get("text", ""),
+                },
+                "color": overlay.get("color", "#ffffff"),
+                "gravity": "center",
+                "y": 0,
+            })
+
+        result = cloudinary.uploader.upload(
+            file_bytes,
+            resource_type="video",
+            folder="campusvibe/reels",
+            transformation=transformation if transformation else None,
+        )
+
+        video_url = result.get("secure_url")
+        public_id = result.get("public_id")
+
+        thumbnail_url = (
+            f"https://res.cloudinary.com/"
+            f"{os.getenv('CLOUDINARY_CLOUD_NAME')}"
+            f"/video/upload/so_1,w_400,h_600,c_fill/{public_id}.jpg"
+        )
+
+        return {
+            "video_url": video_url,
+            "thumbnail_url": thumbnail_url
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Video upload failed: {str(e)}"
+        )
+        
+def create_reel(
+    db: Session,
+    owner_id: str,
+    video_url: str,
+    thumbnail_url: str,
+    caption: str,
+    school_tag: str
+):
+    """Creates a new reel record in the database."""
+    new_reel = Reel(
+        owner_id=owner_id,
+        video_url=video_url,
+        thumbnail_url=thumbnail_url,
+        caption=caption,
+        school_tag=school_tag,
+    )
+    db.add(new_reel)
+    db.commit()
+    db.refresh(new_reel)
+    return new_reel
+
+# def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10):
+#     """
+#     For You feed logic:
+#     - 70% same school as the logged in user
+#     - 30% from other schools
+#     - ordered by newest first
+
+#     Following feed:
+#     - only reels from people the user follows
+#     """
+
+#     if feed_type == "following":
+#         # Get IDs of everyone the current user follows
+#         following_ids = [
+#             f.following_id for f in
+#             db.query(Follow).filter(Follow.follower_id == current_user_id).all()
+#         ]
+
+#         if not following_ids:
+#             return []  # Following no one — empty feed
+
+#         reels = (
+#             db.query(Reel)
+#             .filter(Reel.owner_id.in_(following_ids), Reel.is_active == True)
+#             .order_by(desc(Reel.created_at))
+#             .offset(skip)
+#             .limit(limit)
+#             .all()
+#         )
+
+#     else:
+#         # FOR YOU — smart school-weighted feed
+#         # Get current user's school
+#         current_user = db.query(User).filter(User.id == current_user_id).first()
+#         user_school = current_user.school_name if current_user else None
+
+#         same_school_reels = []
+#         other_school_reels = []
+
+#         if user_school:
+#             # 70% — same school reels
+#             same_school_reels = (
+#                 db.query(Reel)
+#                 .join(User, Reel.owner_id == User.id)
+#                 .filter(
+#                     Reel.is_active == True,
+#                     Reel.owner_id != current_user_id,  # exclude own reels
+#                     User.school_name == user_school
+#                 )
+#                 .order_by(desc(Reel.created_at))
+#                 .limit(int(limit * 0.7))  # 70% of feed
+#                 .all()
+#             )
+
+#             # 30% — other schools
+#             other_school_reels = (
+#                 db.query(Reel)
+#                 .join(User, Reel.owner_id == User.id)
+#                 .filter(
+#                     Reel.is_active == True,
+#                     Reel.owner_id != current_user_id,
+#                     User.school_name != user_school
+#                 )
+#                 .order_by(desc(Reel.created_at))
+#                 .limit(int(limit * 0.3))  # 30% of feed
+#                 .all()
+#             )
+
+#             # Interleave them — don't just dump all same school then all others
+#             # Pattern: same, same, other, same, same, other...
+#             reels = []
+#             s, o = 0, 0
+#             for i in range(limit):
+#                 if i % 3 == 2 and o < len(other_school_reels):
+#                     reels.append(other_school_reels[o]); o += 1
+#                 elif s < len(same_school_reels):
+#                     reels.append(same_school_reels[s]); s += 1
+#                 elif o < len(other_school_reels):
+#                     reels.append(other_school_reels[o]); o += 1
+#         else:
+#             # No school set — just show all reels
+#             reels = (
+#                 db.query(Reel)
+#                 .filter(Reel.is_active == True)
+#                 .order_by(desc(Reel.created_at))
+#                 .offset(skip)
+#                 .limit(limit)
+#                 .all()
+#             )
+
+#     # Build response with owner info and like status
+#     result = []
+#     for reel in reels:
+#         owner = db.query(User).filter(User.id == reel.owner_id).first()
+#         is_liked = db.query(Like).filter(
+#             Like.reel_id == reel.id,
+#             Like.user_id == current_user_id
+#         ).first() is not None
+
+#         result.append({
+#             "id": reel.id,
+#             "caption": reel.caption,
+#             "video_url": reel.video_url,
+#             "thumbnail_url": reel.thumbnail_url,
+#             "school_tag": reel.school_tag,
+#             "likes_count": reel.likes_count,
+#             "comments_count": reel.comments_count,
+#             "views_count": reel.views_count,
+#             "created_at": reel.created_at,
+#             "owner_id": reel.owner_id,
+#             "owner_username": owner.username if owner else None,
+#             "owner_avatar": owner.avatar_url if owner else None,
+#             "owner_school": owner.school_name if owner else None,
+#             "is_liked": is_liked,
+#         })
+
+#     return result
+
+def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10):
+
+    if feed_type == "following":
+        following_ids = [
+            f.following_id for f in
+            db.query(Follow).filter(Follow.follower_id == current_user_id).all()
+        ]
+
+        # Include own reels in following feed too
+        following_ids.append(current_user_id)
+
+        reels = (
+            db.query(Reel)
+            .filter(Reel.owner_id.in_(following_ids), Reel.is_active == True)
+            .order_by(desc(Reel.created_at))
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    else:
+        # FOR YOU — get current user's school
+        current_user = db.query(User).filter(User.id == current_user_id).first()
+        user_school = current_user.school_name if current_user else None
+
+        if user_school:
+            # Same school reels — INCLUDING own reels
+            same_school_reels = (
+                db.query(Reel)
+                .join(User, Reel.owner_id == User.id)
+                .filter(
+                    Reel.is_active == True,
+                    User.school_name == user_school  # 👈 removed own-reel exclusion
+                )
+                .order_by(desc(Reel.created_at))
+                .limit(int(limit * 0.7))
+                .all()
+            )
+
+            # Other school reels
+            other_school_reels = (
+                db.query(Reel)
+                .join(User, Reel.owner_id == User.id)
+                .filter(
+                    Reel.is_active == True,
+                    User.school_name != user_school
+                )
+                .order_by(desc(Reel.created_at))
+                .limit(int(limit * 0.3))
+                .all()
+            )
+
+            # Interleave: same, same, other, same, same, other...
+            reels = []
+            s, o = 0, 0
+            for i in range(limit):
+                if i % 3 == 2 and o < len(other_school_reels):
+                    reels.append(other_school_reels[o]); o += 1
+                elif s < len(same_school_reels):
+                    reels.append(same_school_reels[s]); s += 1
+                elif o < len(other_school_reels):
+                    reels.append(other_school_reels[o]); o += 1
+
+        else:
+            # No school set — show all reels including own
+            reels = (
+                db.query(Reel)
+                .filter(Reel.is_active == True)
+                .order_by(desc(Reel.created_at))
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
+
+    # Build response
+    result = []
+    for reel in reels:
+        owner = db.query(User).filter(User.id == reel.owner_id).first()
+        is_liked = db.query(Like).filter(
+            Like.reel_id == reel.id,
+            Like.user_id == current_user_id
+        ).first() is not None
+
+        result.append({
+            "id": reel.id,
+            "caption": reel.caption,
+            "video_url": reel.video_url,
+            "thumbnail_url": reel.thumbnail_url,
+            "school_tag": reel.school_tag,
+            "likes_count": reel.likes_count,
+            "comments_count": reel.comments_count,
+            "views_count": reel.views_count,
+            "created_at": reel.created_at,
+            "owner_id": reel.owner_id,
+            "owner_username": owner.username if owner else None,
+            "owner_avatar": owner.avatar_url if owner else None,
+            "owner_school": owner.school_name if owner else None,
+            "is_liked": is_liked,
+        })
+
+    return result
+
+def toggle_like(db: Session, reel_id: str, user_id: str):
+    """
+    Likes a reel if not liked, unlikes if already liked.
+    Returns whether the reel is now liked or not.
+    """
+    reel = db.query(Reel).filter(Reel.id == reel_id).first()
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    # Check if already liked
+    existing_like = db.query(Like).filter(
+        Like.reel_id == reel_id,
+        Like.user_id == user_id
+    ).first()
+
+    if existing_like:
+        # Already liked — remove the like (unlike)
+        db.delete(existing_like)
+        reel.likes_count = max(0, reel.likes_count - 1)
+        db.commit()
+        return {"liked": False, "likes_count": reel.likes_count}
+    else:
+        # Not liked yet — add the like
+        new_like = Like(reel_id=reel_id, user_id=user_id)
+        db.add(new_like)
+        reel.likes_count += 1
+        db.commit()
+        return {"liked": True, "likes_count": reel.likes_count}
+
+
+def add_comment(db: Session, reel_id: str, user_id: str, text: str):
+    """Adds a comment to a reel."""
+    reel = db.query(Reel).filter(Reel.id == reel_id).first()
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    comment = Comment(
+        reel_id=reel_id,
+        user_id=user_id,
+        text=text
+    )
+    db.add(comment)
+    reel.comments_count += 1
+    db.commit()
+    db.refresh(comment)
+    return comment
+
+def increment_views(db: Session, reel_id: str, user_id: str):
+    """
+    Counts a view only once per user per reel.
+    Same user watching the same reel 100 times = still 1 view.
+    Different users watching = 1 view each.
+    """
+    from app.models.reel import VideoView
+
+    # Check if this user already viewed this reel
+    already_viewed = db.query(VideoView).filter(
+        VideoView.reel_id == reel_id,
+        VideoView.user_id == user_id
+    ).first()
+
+    if already_viewed:
+        # Already watched — don't count again
+        return {"counted": False}
+
+    # First time watching — record it and increment
+    new_view = VideoView(reel_id=reel_id, user_id=user_id)
+    db.add(new_view)
+
+    reel = db.query(Reel).filter(Reel.id == reel_id).first()
+    if reel:
+        reel.views_count += 1
+
+    db.commit()
+    return {"counted": True}
