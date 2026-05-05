@@ -7,6 +7,8 @@ from app.models.reel import Reel, Like, Comment, Follow
 from app.models.user import User
 import os
 from dotenv import load_dotenv
+import random
+from sqlalchemy import func
 
 load_dotenv()
 
@@ -232,8 +234,6 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
             f.following_id for f in
             db.query(Follow).filter(Follow.follower_id == current_user_id).all()
         ]
-
-        # Include own reels in following feed too
         following_ids.append(current_user_id)
 
         reels = (
@@ -246,25 +246,24 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
         )
 
     else:
-        # FOR YOU — get current user's school
         current_user = db.query(User).filter(User.id == current_user_id).first()
         user_school = current_user.school_name if current_user else None
 
         if user_school:
-            # Same school reels — INCLUDING own reels
+            # Same school reels — randomized with func.random()
+            # func.random() means every user gets a different order
             same_school_reels = (
                 db.query(Reel)
                 .join(User, Reel.owner_id == User.id)
                 .filter(
                     Reel.is_active == True,
-                    User.school_name == user_school  # 👈 removed own-reel exclusion
+                    User.school_name == user_school
                 )
-                .order_by(desc(Reel.created_at))
+                .order_by(func.random())  # 👈 random order
                 .limit(int(limit * 0.7))
                 .all()
             )
 
-            # Other school reels
             other_school_reels = (
                 db.query(Reel)
                 .join(User, Reel.owner_id == User.id)
@@ -272,29 +271,22 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
                     Reel.is_active == True,
                     User.school_name != user_school
                 )
-                .order_by(desc(Reel.created_at))
+                .order_by(func.random())  # 👈 random order
                 .limit(int(limit * 0.3))
                 .all()
             )
 
-            # Interleave: same, same, other, same, same, other...
-            reels = []
-            s, o = 0, 0
-            for i in range(limit):
-                if i % 3 == 2 and o < len(other_school_reels):
-                    reels.append(other_school_reels[o]); o += 1
-                elif s < len(same_school_reels):
-                    reels.append(same_school_reels[s]); s += 1
-                elif o < len(other_school_reels):
-                    reels.append(other_school_reels[o]); o += 1
+            # Combine and shuffle instead of strict interleaving
+            # This feels more natural and unpredictable
+            combined = same_school_reels + other_school_reels
+            random.shuffle(combined)  # 👈 shuffle the combined list
+            reels = combined
 
         else:
-            # No school set — show all reels including own
             reels = (
                 db.query(Reel)
                 .filter(Reel.is_active == True)
-                .order_by(desc(Reel.created_at))
-                .offset(skip)
+                .order_by(func.random())  # 👈 random for everyone
                 .limit(limit)
                 .all()
             )
