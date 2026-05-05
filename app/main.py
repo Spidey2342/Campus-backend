@@ -6,7 +6,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.database import engine, Base
 from app.models import user, reel
-from app.routers import auth, reels, users, discover
+from app.routers import auth, reels, users, discover, notifications
 
 # Limiter uses the client's IP address to track requests
 # get_remote_address extracts the IP from the request
@@ -38,6 +38,7 @@ app.include_router(auth.router)
 app.include_router(reels.router)
 app.include_router(users.router)
 app.include_router(discover.router)
+app.include_router(notifications.router)
 
 # Global error handler — catches ANY unhandled exception
 # Instead of a raw 500 crash, returns a clean JSON message

@@ -146,32 +146,36 @@ def follow_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Find the user to follow
     user_to_follow = db.query(User).filter(User.username == username).first()
     if not user_to_follow:
         raise HTTPException(status_code=404, detail="User not found")
-
-    # Can't follow yourself
     if user_to_follow.id == current_user.id:
         raise HTTPException(status_code=400, detail="You cannot follow yourself")
 
-    # Check if already following
     existing = db.query(Follow).filter(
         Follow.follower_id == current_user.id,
         Follow.following_id == user_to_follow.id
     ).first()
 
     if existing:
-        # Already following — unfollow
         db.delete(existing)
         db.commit()
         return {"following": False, "message": f"Unfollowed {username}"}
     else:
-        # Not following — follow
         new_follow = Follow(
             follower_id=current_user.id,
             following_id=user_to_follow.id
         )
         db.add(new_follow)
         db.commit()
+
+        # Notify the followed user
+        from app.services.notification_service import create_notification
+        create_notification(
+            db=db,
+            recipient_id=user_to_follow.id,
+            sender_id=current_user.id,
+            type="follow",
+            message=f"@{current_user.username} started following you",
+        )
         return {"following": True, "message": f"Now following {username}"}

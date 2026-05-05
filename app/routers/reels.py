@@ -119,13 +119,28 @@ async def like_reel(
     current_user: User = Depends(get_current_user)
 ):
     try:
-        return toggle_like(db, reel_id, current_user.id)
+        result = toggle_like(db, reel_id, current_user.id)
+
+        # Send notification to reel owner when liked
+        if result["liked"]:
+            from app.models.reel import Reel
+            from app.services.notification_service import create_notification
+            reel = db.query(Reel).filter(Reel.id == reel_id).first()
+            if reel:
+                create_notification(
+                    db=db,
+                    recipient_id=reel.owner_id,
+                    sender_id=current_user.id,
+                    type="like",
+                    message=f"@{current_user.username} liked your reel",
+                    reel_id=reel_id
+                )
+        return result
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
+    
 # 20 comments per minute
 @router.post("/{reel_id}/comment", status_code=201)
 @limiter.limit("20/minute")
@@ -192,34 +207,42 @@ async def delete_reel(
 
 
 
-@router.get("/{reel_id}/comments")
-async def get_comments(
+@router.post("/{reel_id}/comment", status_code=201)
+@limiter.limit("20/minute")
+async def comment_on_reel(
+    request: Request,
     reel_id: str,
+    comment_data: CommentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     try:
-        comments = (
-            db.query(Comment)
-            .filter(Comment.reel_id == reel_id)
-            .order_by(Comment.created_at.desc())
-            .all()
-        )
-        result = []
-        for c in comments:
-            owner = db.query(User).filter(User.id == c.user_id).first()
-            result.append({
-                "id": c.id,
-                "text": c.text,
-                "user_id": c.user_id,
-                "username": owner.username if owner else None,
-                "avatar_url": owner.avatar_url if owner else None,
-                "created_at": c.created_at,
-            })
+        if len(comment_data.text.strip()) == 0:
+            raise HTTPException(status_code=400, detail="Comment cannot be empty")
+        if len(comment_data.text) > 300:
+            raise HTTPException(status_code=400, detail="Comment cannot exceed 300 characters")
+
+        result = add_comment(db, reel_id, current_user.id, comment_data.text)
+
+        # Notify reel owner
+        from app.models.reel import Reel
+        from app.services.notification_service import create_notification
+        reel = db.query(Reel).filter(Reel.id == reel_id).first()
+        if reel:
+            create_notification(
+                db=db,
+                recipient_id=reel.owner_id,
+                sender_id=current_user.id,
+                type="comment",
+                message=f"@{current_user.username} commented: {comment_data.text[:50]}",
+                reel_id=reel_id
+            )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 
 @router.get("/{reel_id}")
 async def get_single_reel(

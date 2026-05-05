@@ -77,3 +77,29 @@ class VideoView(Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     reel_id = Column(String, ForeignKey("reels.id", ondelete="CASCADE"), primary_key=True)
     viewed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    
+    # Who receives the notification
+    recipient_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Who triggered it
+    sender_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Type: "like", "comment", "follow"
+    type = Column(String(50), nullable=False)
+    
+    # Optional — which reel triggered it
+    reel_id = Column(String, ForeignKey("reels.id", ondelete="CASCADE"), nullable=True)
+    
+    # The message shown to the user
+    message = Column(String, nullable=False)
+    
+    # Has the user seen this notification
+    is_read = Column(Boolean, default=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
