@@ -103,3 +103,46 @@ class Notification(Base):
     is_read = Column(Boolean, default=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    # "dm" or "group"
+    type = Column(String(10), nullable=False, default="dm")
+    name = Column(String(100), nullable=True)  # group name
+    avatar_url = Column(String, nullable=True)  # group avatar
+    created_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    messages = relationship("Message", back_populates="conversation")
+    members = relationship("ConversationMember", back_populates="conversation")
+
+
+class ConversationMember(Base):
+    __tablename__ = "conversation_members"
+
+    conversation_id = Column(String, ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Last time this user read the conversation
+    last_read_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    conversation = relationship("Conversation", back_populates="members")
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversation_id = Column(String, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    sender_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    text = Column(Text, nullable=True)
+    # "text", "system" (joined/left), "reel" (shared reel)
+    message_type = Column(String(20), default="text")
+    # If sharing a reel
+    reel_id = Column(String, ForeignKey("reels.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    conversation = relationship("Conversation", back_populates="messages")
