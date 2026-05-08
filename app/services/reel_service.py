@@ -50,9 +50,11 @@ def upload_video_to_cloudinary(
 
         # Upload params
         upload_params = {
-            "resource_type": "video",
-            "folder": "campusvibe/reels",
-        }
+    "resource_type": "video",
+    "folder": "campusvibe/reels",
+    "quality": "auto:low",    # 👈 compress aggressively
+    "fetch_format": "auto",   # 👈 serve best format (mp4/webm)
+}
 
         # If we have transformations use eager_async
         # This means Cloudinary processes them in the background
