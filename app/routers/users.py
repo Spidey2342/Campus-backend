@@ -9,6 +9,10 @@ from app.schemas.user import UserResponse
 import cloudinary
 import cloudinary.uploader
 import os
+from pydantic import BaseModel
+
+class FCMTokenRequest(BaseModel):
+    fcm_token: str
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -179,3 +183,13 @@ def follow_user(
             message=f"@{current_user.username} started following you",
         )
         return {"following": True, "message": f"Now following {username}"}
+
+@router.post("/fcm-token")
+def save_fcm_token(
+    body: FCMTokenRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    current_user.fcm_token = body.fcm_token
+    db.commit()
+    return {"message": "Token saved"}
