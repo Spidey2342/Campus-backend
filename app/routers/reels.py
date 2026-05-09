@@ -170,6 +170,42 @@ async def comment_on_reel(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/{reel_id}/comment", status_code=201)
+@limiter.limit("20/minute")
+async def comment_on_reel(
+    request: Request,
+    reel_id: str,
+    comment_data: CommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        if len(comment_data.text.strip()) == 0:
+            raise HTTPException(status_code=400, detail="Comment cannot be empty")
+        if len(comment_data.text) > 300:
+            raise HTTPException(status_code=400, detail="Comment cannot exceed 300 characters")
+
+        result = add_comment(db, reel_id, current_user.id, comment_data.text)
+
+        # Notify reel owner
+        from app.models.reel import Reel
+        from app.services.notification_service import create_notification
+        reel = db.query(Reel).filter(Reel.id == reel_id).first()
+        if reel:
+            create_notification(
+                db=db,
+                recipient_id=reel.owner_id,
+                sender_id=current_user.id,
+                type="comment",
+                message=f"@{current_user.username} commented: {comment_data.text[:50]}",
+                reel_id=reel_id
+            )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/{reel_id}/view")
 async def view_reel(
     reel_id: str,
@@ -206,43 +242,6 @@ async def delete_reel(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
-@router.post("/{reel_id}/comment", status_code=201)
-@limiter.limit("20/minute")
-async def comment_on_reel(
-    request: Request,
-    reel_id: str,
-    comment_data: CommentCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    try:
-        if len(comment_data.text.strip()) == 0:
-            raise HTTPException(status_code=400, detail="Comment cannot be empty")
-        if len(comment_data.text) > 300:
-            raise HTTPException(status_code=400, detail="Comment cannot exceed 300 characters")
-
-        result = add_comment(db, reel_id, current_user.id, comment_data.text)
-
-        # Notify reel owner
-        from app.models.reel import Reel
-        from app.services.notification_service import create_notification
-        reel = db.query(Reel).filter(Reel.id == reel_id).first()
-        if reel:
-            create_notification(
-                db=db,
-                recipient_id=reel.owner_id,
-                sender_id=current_user.id,
-                type="comment",
-                message=f"@{current_user.username} commented: {comment_data.text[:50]}",
-                reel_id=reel_id
-            )
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
 
 @router.get("/{reel_id}")
 async def get_single_reel(
