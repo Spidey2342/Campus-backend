@@ -3,7 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.database import Base
-
+fcm_token = Column(String, nullable=True)
 class User(Base):
     __tablename__ = "users"
 
@@ -44,3 +44,17 @@ class User(Base):
         back_populates="follower",
         lazy="select"
     )
+
+class FCMTokenRequest(BaseModel):
+    fcm_token: str
+
+@router.post("/fcm-token")
+def save_fcm_token(
+    body: FCMTokenRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Save the user's FCM device token for push notifications."""
+    current_user.fcm_token = body.fcm_token
+    db.commit()
+    return {"message": "Token saved"}

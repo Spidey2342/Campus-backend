@@ -1,6 +1,8 @@
 from sqlalchemy.orm import Session
 from app.models.reel import Notification
 from app.models.user import User
+from app.services.push_service import send_push_notification
+from app.models.user import User
 
 def create_notification(
     db: Session,
@@ -10,11 +12,6 @@ def create_notification(
     message: str,
     reel_id: str = None
 ):
-    """
-    Creates a notification for a user.
-    We never notify yourself — skip if sender == recipient.
-    """
-    # Don't notify yourself
     if recipient_id == sender_id:
         return
 
@@ -27,6 +24,20 @@ def create_notification(
     )
     db.add(notification)
     db.commit()
+
+    # Send push notification to recipient's device
+    recipient = db.query(User).filter(User.id == recipient_id).first()
+    if recipient and recipient.fcm_token:
+        # Build the URL to open when notification is tapped
+        url = f"/reel/{reel_id}" if reel_id else "/notifications"
+
+        send_push_notification(
+            fcm_token=recipient.fcm_token,
+            title="CampusVibe",
+            body=message,
+            url=url
+        )
+
     return notification
 
 
