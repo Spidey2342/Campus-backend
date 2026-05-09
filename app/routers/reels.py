@@ -22,7 +22,6 @@ router = APIRouter(prefix="/reels", tags=["Reels"])
 limiter = Limiter(key_func=get_remote_address)
 
 
-# 10 uploads per hour — prevents spam
 @router.post("/upload", status_code=201)
 @limiter.limit("10/hour")
 async def upload_reel(
@@ -37,20 +36,12 @@ async def upload_reel(
     current_user: User = Depends(get_current_user)
 ):
     try:
-        # Validate file type
         if not video.content_type.startswith("video/"):
-            raise HTTPException(
-                status_code=400,
-                detail="File must be a video"
-            )
+            raise HTTPException(status_code=400, detail="File must be a video")
 
-        # Validate file size — 100MB max
         file_bytes = await video.read()
         if len(file_bytes) > 100 * 1024 * 1024:
-            raise HTTPException(
-                status_code=400,
-                detail="Video must be under 100MB"
-            )
+            raise HTTPException(status_code=400, detail="Video must be under 100MB")
 
         overlays = []
         if text_overlays:
@@ -90,14 +81,13 @@ async def upload_reel(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 60 feed requests per minute — generous for scrolling
 @router.get("/feed")
 @limiter.limit("60/minute")
 async def get_reel_feed(
     request: Request,
     type: str = Query(default="foryou"),
-    skip: int = Query(default=0, ge=0),       # ge=0 means >= 0
-    limit: int = Query(default=10, le=20),    # le=20 means <= 20
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, le=20),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -109,7 +99,6 @@ async def get_reel_feed(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 30 likes per minute — prevents like bombing
 @router.post("/{reel_id}/like")
 @limiter.limit("30/minute")
 async def like_reel(
@@ -121,9 +110,7 @@ async def like_reel(
     try:
         result = toggle_like(db, reel_id, current_user.id)
 
-        # Send notification to reel owner when liked
         if result["liked"]:
-            from app.models.reel import Reel
             from app.services.notification_service import create_notification
             reel = db.query(Reel).filter(Reel.id == reel_id).first()
             if reel:
@@ -140,36 +127,9 @@ async def like_reel(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-# 20 comments per minute
-@router.post("/{reel_id}/comment", status_code=201)
-@limiter.limit("20/minute")
-async def comment_on_reel(
-    request: Request,
-    reel_id: str,
-    comment_data: CommentCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    try:
-        # Validate comment length
-        if len(comment_data.text.strip()) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Comment cannot be empty"
-            )
-        if len(comment_data.text) > 300:
-            raise HTTPException(
-                status_code=400,
-                detail="Comment cannot exceed 300 characters"
-            )
-        return add_comment(db, reel_id, current_user.id, comment_data.text)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
+# ✅ SINGLE comment route — with notification
 @router.post("/{reel_id}/comment", status_code=201)
 @limiter.limit("20/minute")
 async def comment_on_reel(
@@ -187,8 +147,6 @@ async def comment_on_reel(
 
         result = add_comment(db, reel_id, current_user.id, comment_data.text)
 
-        # Notify reel owner
-        from app.models.reel import Reel
         from app.services.notification_service import create_notification
         reel = db.query(Reel).filter(Reel.id == reel_id).first()
         if reel:
@@ -205,6 +163,37 @@ async def comment_on_reel(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ✅ GET comments — must be BEFORE /{reel_id}
+@router.get("/{reel_id}/comments")
+async def get_comments(
+    reel_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        comments = (
+            db.query(Comment)
+            .filter(Comment.reel_id == reel_id)
+            .order_by(Comment.created_at.desc())
+            .all()
+        )
+        result = []
+        for c in comments:
+            owner = db.query(User).filter(User.id == c.user_id).first()
+            result.append({
+                "id": c.id,
+                "text": c.text,
+                "user_id": c.user_id,
+                "username": owner.username if owner else None,
+                "avatar_url": owner.avatar_url if owner else None,
+                "created_at": c.created_at,
+            })
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/{reel_id}/view")
 async def view_reel(
@@ -229,10 +218,7 @@ async def delete_reel(
         if not reel:
             raise HTTPException(status_code=404, detail="Reel not found")
         if reel.owner_id != current_user.id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only delete your own reels"
-            )
+            raise HTTPException(status_code=403, detail="You can only delete your own reels")
         reel.is_active = False
         db.commit()
         return {"message": "Reel deleted successfully"}
@@ -242,7 +228,7 @@ async def delete_reel(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
+# ✅ Single reel — always LAST because /{reel_id} matches everything
 @router.get("/{reel_id}")
 async def get_single_reel(
     reel_id: str,
