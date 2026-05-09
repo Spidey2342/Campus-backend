@@ -43,7 +43,7 @@ def send_push_notification(fcm_token: str, title: str, body: str, url: str = "/"
                     title=title,
                     body=body,
                     icon="/icons/icon-192.png",
-                    badge="/icons/icon-96.png",
+                    badge="/icons/icon-192.png",
                 )
             )
         )
