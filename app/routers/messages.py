@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.reel import Conversation, ConversationMember, Message
 import json
 from datetime import datetime
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
 
@@ -92,6 +93,52 @@ def get_conversation_detail(db: Session, conversation: Conversation, current_use
         "updated_at": conversation.updated_at or conversation.created_at,
     }
 
+
+class SendMessageRequest(BaseModel):
+    text: str
+
+@router.post("/conversations/{conversation_id}/send")
+def send_message(
+    conversation_id: str,
+    body: SendMessageRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Check membership
+    member = db.query(ConversationMember).filter(
+        ConversationMember.conversation_id == conversation_id,
+        ConversationMember.user_id == current_user.id
+    ).first()
+    if not member:
+        raise HTTPException(status_code=403, detail="Not a member")
+
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Save message
+    new_message = Message(
+        conversation_id=conversation_id,
+        sender_id=current_user.id,
+        text=body.text.strip(),
+        message_type="text"
+    )
+    db.add(new_message)
+
+    # Update conversation timestamp
+    conv = db.query(Conversation).filter(
+        Conversation.id == conversation_id
+    ).first()
+    if conv:
+        conv.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(new_message)
+
+    return {
+        "id": new_message.id,
+        "text": new_message.text,
+        "created_at": new_message.created_at,
+    }
 
 @router.get("/conversations")
 def get_conversations(
