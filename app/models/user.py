@@ -3,6 +3,9 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from app.database import Base
+from pydantic import BaseModel
+
+
 fcm_token = Column(String, nullable=True)
 class User(Base):
     __tablename__ = "users"
