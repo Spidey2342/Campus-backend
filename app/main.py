@@ -40,6 +40,11 @@ app.include_router(users.router)
 app.include_router(discover.router)
 app.include_router(notifications.router)
 app.include_router(messages.router)
+@app.on_event("startup")
+async def startup_diagnostic():
+    import os
+    print("DB URL set:", bool(os.getenv("DATABASE_URL")))
+    print("Routers loaded: auth, reels, users, discover, notifications, messages")
 
 # Global error handler — catches ANY unhandled exception
 # Instead of a raw 500 crash, returns a clean JSON message
