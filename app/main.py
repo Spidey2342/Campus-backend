@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from app.database import engine, Base
 from app.models import user, reel
 from app.routers import auth, reels, users, discover, notifications, messages
-
+import os
 # Limiter uses the client's IP address to track requests
 # get_remote_address extracts the IP from the request
 limiter = Limiter(key_func=get_remote_address)
@@ -42,7 +42,7 @@ app.include_router(notifications.router)
 app.include_router(messages.router)
 @app.on_event("startup")
 async def startup_diagnostic():
-    import os
+    
     print("DB URL set:", bool(os.getenv("DATABASE_URL")))
     print("Routers loaded: auth, reels, users, discover, notifications, messages")
 
