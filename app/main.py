@@ -7,9 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from app.database import engine, Base
 from app.models import user, reel
 from app.routers import auth, reels, users, discover, notifications, messages
-import os
-# Limiter uses the client's IP address to track requests
-# get_remote_address extracts the IP from the request
+
 limiter = Limiter(key_func=get_remote_address)
 
 Base.metadata.create_all(bind=engine)
@@ -20,11 +18,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Attach limiter to the app
 app.state.limiter = limiter
-
-# When rate limit is exceeded — return a clean JSON error
-# instead of a crash
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
@@ -34,31 +28,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 app.include_router(auth.router)
 app.include_router(reels.router)
 app.include_router(users.router)
 app.include_router(discover.router)
 app.include_router(notifications.router)
 app.include_router(messages.router)
-@app.on_event("startup")
-async def startup_diagnostic():
-    
-    print("DB URL set:", bool(os.getenv("DATABASE_URL")))
-    print("Routers loaded: auth, reels, users, discover, notifications, messages")
 
-# Global error handler — catches ANY unhandled exception
-# Instead of a raw 500 crash, returns a clean JSON message
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
-    # Print full traceback to server logs for debugging
     traceback.print_exc()
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": "Something went wrong on our end. Please try again.",
-          
-        }
+        content={"detail": "Something went wrong on our end."}
     )
 
 @app.get("/health")
