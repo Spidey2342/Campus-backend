@@ -184,6 +184,9 @@ def follow_user(
         )
         return {"following": True, "message": f"Now following {username}"}
 
+# class FCMTokenRequest(BaseModel):
+#     fcm_token: str
+
 @router.post("/fcm-token")
 def save_fcm_token(
     body: FCMTokenRequest,
