@@ -90,6 +90,71 @@ def upload_video_to_cloudinary(
             detail=f"Video upload failed: {str(e)}"
         )
             
+def upload_image_to_cloudinary(file_bytes: bytes, filename: str, text_overlays: list = []) -> dict:
+    """
+    Uploads an image to Cloudinary and converts it into a 5-second looping
+    video (using Cloudinary's video generation), so images play in the feed
+    exactly like reels. Text overlays are burned in server-side.
+    """
+    try:
+        transformation = [
+            # Pad to 9:16 portrait — fills empty space with blurred version of the image
+            {"width": 720, "height": 1280, "crop": "pad", "background": "blurred"},
+        ]
+
+        for overlay in text_overlays:
+            transformation.append({
+                "overlay": {
+                    "font_family": "Arial",
+                    "font_size": overlay.get("size", 24),
+                    "font_weight": "bold",
+                    "text": overlay.get("text", ""),
+                },
+                "color": overlay.get("color", "#ffffff"),
+                # Use percentage gravity so position matches frontend (x/y as %)
+                "gravity": "north_west",
+                "x": f"{overlay.get('x', 50)}p",
+                "y": f"{overlay.get('y', 50)}p",
+            })
+
+        result = cloudinary.uploader.upload(
+            file_bytes,
+            resource_type="image",
+            folder="campusvibe/photos",
+            transformation=transformation,
+            quality="auto:good",
+        )
+
+        public_id = result.get("public_id")
+        image_url = result.get("secure_url")
+
+        # Cloudinary can serve an image as a looping video using /video/upload
+        # with fl_loop and du_ (duration). This means no separate video encoding —
+        # the image just loops as a 5-second slideshow in the player.
+        cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+        video_url = (
+            f"https://res.cloudinary.com/{cloud_name}"
+            f"/video/upload/du_5,fl_loop,q_auto/campusvibe/photos/{public_id.split('/')[-1]}.mp4"
+        )
+
+        # Thumbnail is just the image itself resized
+        thumbnail_url = (
+            f"https://res.cloudinary.com/{cloud_name}"
+            f"/image/upload/w_400,h_600,c_fill/{public_id}.jpg"
+        )
+
+        return {
+            "video_url": video_url,
+            "thumbnail_url": thumbnail_url
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Image upload failed: {str(e)}"
+        )
+
+
 def create_reel(
     db: Session,
     owner_id: str,

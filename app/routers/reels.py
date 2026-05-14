@@ -10,6 +10,7 @@ from app.models.reel import Reel, Like, Comment
 from app.schemas.reel import ReelResponse, CommentCreate, CommentResponse
 from app.services.reel_service import (
     upload_video_to_cloudinary,
+    upload_image_to_cloudinary,
     create_reel,
     get_feed,
     toggle_like,
@@ -36,12 +37,13 @@ async def upload_reel(
     current_user: User = Depends(get_current_user)
 ):
     try:
-        if not video.content_type.startswith("video/"):
-            raise HTTPException(status_code=400, detail="File must be a video")
+        is_image = video.content_type.startswith("image/")
+        is_video = video.content_type.startswith("video/")
+
+        if not is_image and not is_video:
+            raise HTTPException(status_code=400, detail="File must be a video or image")
 
         file_bytes = await video.read()
-        if len(file_bytes) > 100 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Video must be under 100MB")
 
         overlays = []
         if text_overlays:
@@ -50,13 +52,20 @@ async def upload_reel(
             except:
                 overlays = []
 
-        upload_result = upload_video_to_cloudinary(
-            file_bytes,
-            video.filename,
-            trim_start=trim_start,
-            trim_end=trim_end,
-            text_overlays=overlays
-        )
+        if is_image:
+            if len(file_bytes) > 20 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="Image must be under 20MB")
+            upload_result = upload_image_to_cloudinary(file_bytes, video.filename, text_overlays=overlays)
+        else:
+            if len(file_bytes) > 100 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="Video must be under 100MB")
+            upload_result = upload_video_to_cloudinary(
+                file_bytes,
+                video.filename,
+                trim_start=trim_start,
+                trim_end=trim_end,
+                text_overlays=overlays
+            )
 
         reel = create_reel(
             db=db,
