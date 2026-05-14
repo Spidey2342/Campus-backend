@@ -146,3 +146,26 @@ class Message(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     conversation = relationship("Conversation", back_populates="messages")
+
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Who filed the report
+    reporter_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # What's being reported — reel or user (at least one must be set)
+    reel_id = Column(String, ForeignKey("reels.id", ondelete="CASCADE"), nullable=True)
+    reported_user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+
+    # "spam" | "inappropriate" | "harassment" | "misinformation" | "other"
+    reason = Column(String(50), nullable=False)
+    details = Column(Text, nullable=True)
+
+    # "pending" | "reviewed" | "actioned" | "dismissed"
+    status = Column(String(20), default="pending", nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)

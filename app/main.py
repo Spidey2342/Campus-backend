@@ -6,7 +6,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.database import engine, Base
 from app.models import user, reel  # noqa: F401 — imported for side-effect (table creation)
-from app.routers import auth, reels, users, discover, notifications, messages
+from app.routers import auth, reels, users, discover, notifications, messages, moderation
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -39,6 +39,7 @@ app.include_router(users.router)
 app.include_router(discover.router)
 app.include_router(notifications.router)
 app.include_router(messages.router)
+app.include_router(moderation.router)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

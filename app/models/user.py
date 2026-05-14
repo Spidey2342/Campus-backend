@@ -21,6 +21,7 @@ class User(Base):
     bio = Column(Text, nullable=True)
     is_verified = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)  # admin can review reports
     avatar_url = Column(String, nullable=True)
     fcm_token = Column(String, nullable=True)  # 👈 just the column, no route
     created_at = Column(DateTime(timezone=True), server_default=func.now())
