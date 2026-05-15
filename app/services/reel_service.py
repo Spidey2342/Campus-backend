@@ -374,10 +374,6 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
         user_school  = current_user.school_name if current_user else None
 
         if user_school:
-            # Cursor-based random: use the reel's id (UUID) hashed with a
-            # per-request seed. This avoids full-table ORDER BY random()
-            # while still giving different orderings each call.
-            # MD5(reel.id || skip) is fast (index-friendly hash, not sort).
             seed_expr = text("MD5(reels.id || CAST(:skip AS TEXT))")
 
             same_school_reels = (
@@ -385,11 +381,12 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
                 .join(User, Reel.owner_id == User.id)
                 .filter(
                     Reel.is_active == True,
+                    Reel.owner_id != current_user_id,  # never show your own reels in For You
                     User.school_name == user_school
                 )
                 .order_by(seed_expr)
                 .params(skip=skip)
-                .limit(int(limit * 0.7))
+                .limit(int(limit * 0.6))  # 60% same school (was 70% — too heavy)
                 .all()
             )
 
@@ -398,11 +395,12 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
                 .join(User, Reel.owner_id == User.id)
                 .filter(
                     Reel.is_active == True,
+                    Reel.owner_id != current_user_id,  # never show your own reels
                     User.school_name != user_school
                 )
                 .order_by(seed_expr)
                 .params(skip=skip)
-                .limit(int(limit * 0.3))
+                .limit(int(limit * 0.4))  # 40% other schools (was 30%)
                 .all()
             )
 
@@ -417,10 +415,12 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
                     reels.append(other_school_reels[o]); o += 1
 
         else:
-            # No school set — deterministic pseudo-random by skip page
             reels = (
                 db.query(Reel)
-                .filter(Reel.is_active == True)
+                .filter(
+                    Reel.is_active == True,
+                    Reel.owner_id != current_user_id,  # never show your own reels
+                )
                 .order_by(text("MD5(reels.id || CAST(:skip AS TEXT))"))
                 .params(skip=skip)
                 .limit(limit)
