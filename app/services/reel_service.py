@@ -385,7 +385,6 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
                 .join(User, Reel.owner_id == User.id)
                 .filter(
                     Reel.is_active == True,
-                    Reel.owner_id != current_user_id,
                     User.school_name == user_school
                 )
                 .order_by(seed_expr)
@@ -399,7 +398,6 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
                 .join(User, Reel.owner_id == User.id)
                 .filter(
                     Reel.is_active == True,
-                    Reel.owner_id != current_user_id,
                     User.school_name != user_school
                 )
                 .order_by(seed_expr)
@@ -422,10 +420,7 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
             # No school set — deterministic pseudo-random by skip page
             reels = (
                 db.query(Reel)
-                .filter(
-                    Reel.is_active == True,
-                    Reel.owner_id != current_user_id,
-                )
+                .filter(Reel.is_active == True)
                 .order_by(text("MD5(reels.id || CAST(:skip AS TEXT))"))
                 .params(skip=skip)
                 .limit(limit)
