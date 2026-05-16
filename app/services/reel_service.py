@@ -349,14 +349,11 @@ def _build_feed_response(db: Session, reels: list, current_user_id: str) -> list
 def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10):
 
     if feed_type == "following":
-        # Subquery — never loads follow IDs into Python memory
-        # Scales to 100k follows without issue
         following_subq = (
             db.query(Follow.following_id)
             .filter(Follow.follower_id == current_user_id)
             .subquery()
         )
-
         reels = (
             db.query(Reel)
             .filter(
@@ -368,64 +365,98 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
             .limit(limit)
             .all()
         )
+        return _build_feed_response(db, reels, current_user_id)
+
+    # ── FOR YOU ──────────────────────────────────────────────────────────────
+    # Strategy:
+    # - Never show your own reels
+    # - 5% chance of showing your reel to others (handled on their feeds)
+    # - Use a per-user daily seed so ordering feels consistent within a session
+    #   but changes the next day — no repeats within one scroll session
+    # - When skip >= total reels (feed exhausted), loop back from 0 with a
+    #   new seed so the feed never actually ends
+    # - 65% same school, 35% other schools for a good mix
+
+    import hashlib
+    from datetime import date
+
+    # Seed = user_id + today's date — stable within a day, different tomorrow
+    seed_str = f"{current_user_id}{date.today().isoformat()}"
+    seed_hash = int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % 999983
+
+    total_active = db.query(func.count(Reel.id)).filter(
+        Reel.is_active == True,
+        Reel.owner_id != current_user_id,
+    ).scalar() or 0
+
+    # If we've scrolled past all reels, loop back with a shifted seed
+    # so content reshuffles instead of stopping
+    effective_skip = skip
+    loop_offset = 0
+    if total_active > 0 and skip >= total_active:
+        loop_offset = (skip // total_active) * 7  # shift seed each loop
+        effective_skip = skip % total_active
+
+    seed_expr = text("MD5(reels.id || CAST(:seed AS TEXT))")
+    seed_val = seed_hash + loop_offset
+
+    current_user = db.query(User).filter(User.id == current_user_id).first()
+    user_school  = current_user.school_name if current_user else None
+
+    if user_school:
+        same_school_reels = (
+            db.query(Reel)
+            .join(User, Reel.owner_id == User.id)
+            .filter(
+                Reel.is_active == True,
+                Reel.owner_id != current_user_id,
+                User.school_name == user_school
+            )
+            .order_by(seed_expr)
+            .params(seed=seed_val)
+            .limit(int(limit * 0.65))
+            .offset(effective_skip)
+            .all()
+        )
+
+        other_school_reels = (
+            db.query(Reel)
+            .join(User, Reel.owner_id == User.id)
+            .filter(
+                Reel.is_active == True,
+                Reel.owner_id != current_user_id,
+                User.school_name != user_school
+            )
+            .order_by(seed_expr)
+            .params(seed=seed_val)
+            .limit(int(limit * 0.35))
+            .offset(effective_skip)
+            .all()
+        )
+
+        # Interleave: ~2 same-school then 1 other, repeat
+        reels, s, o = [], 0, 0
+        for i in range(limit):
+            if i % 3 == 2 and o < len(other_school_reels):
+                reels.append(other_school_reels[o]); o += 1
+            elif s < len(same_school_reels):
+                reels.append(same_school_reels[s]); s += 1
+            elif o < len(other_school_reels):
+                reels.append(other_school_reels[o]); o += 1
 
     else:
-        current_user = db.query(User).filter(User.id == current_user_id).first()
-        user_school  = current_user.school_name if current_user else None
-
-        if user_school:
-            # Cursor-based random: use the reel's id (UUID) hashed with a
-            # per-request seed. This avoids full-table ORDER BY random()
-            # while still giving different orderings each call.
-            # MD5(reel.id || skip) is fast (index-friendly hash, not sort).
-            seed_expr = text("MD5(reels.id || CAST(:skip AS TEXT))")
-
-            same_school_reels = (
-                db.query(Reel)
-                .join(User, Reel.owner_id == User.id)
-                .filter(
-                    Reel.is_active == True,
-                    User.school_name == user_school
-                )
-                .order_by(seed_expr)
-                .params(skip=skip)
-                .limit(int(limit * 0.7))
-                .all()
+        reels = (
+            db.query(Reel)
+            .filter(
+                Reel.is_active == True,
+                Reel.owner_id != current_user_id,
             )
-
-            other_school_reels = (
-                db.query(Reel)
-                .join(User, Reel.owner_id == User.id)
-                .filter(
-                    Reel.is_active == True,
-                    User.school_name != user_school
-                )
-                .order_by(seed_expr)
-                .params(skip=skip)
-                .limit(int(limit * 0.3))
-                .all()
-            )
-
-            # Interleave: 2 same-school, 1 other, repeat
-            reels, s, o = [], 0, 0
-            for i in range(limit):
-                if i % 3 == 2 and o < len(other_school_reels):
-                    reels.append(other_school_reels[o]); o += 1
-                elif s < len(same_school_reels):
-                    reels.append(same_school_reels[s]); s += 1
-                elif o < len(other_school_reels):
-                    reels.append(other_school_reels[o]); o += 1
-
-        else:
-            # No school set — deterministic pseudo-random by skip page
-            reels = (
-                db.query(Reel)
-                .filter(Reel.is_active == True)
-                .order_by(text("MD5(reels.id || CAST(:skip AS TEXT))"))
-                .params(skip=skip)
-                .limit(limit)
-                .all()
-            )
+            .order_by(seed_expr)
+            .params(seed=seed_val)
+            .offset(effective_skip)
+            .limit(limit)
+            .all()
+        )
 
     return _build_feed_response(db, reels, current_user_id)
 
