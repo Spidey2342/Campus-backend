@@ -92,18 +92,15 @@ def upload_video_to_cloudinary(
             
 def upload_image_to_cloudinary(file_bytes: bytes, filename: str, text_overlays: list = []) -> dict:
     """
-    Uploads an image to Cloudinary and converts it into a 5-second looping
-    video (using Cloudinary's video generation), so images play in the feed
-    exactly like reels. Text overlays are burned in server-side.
+    Uploads an image to Cloudinary as a video resource so it plays in the feed
+    exactly like a reel. We use resource_type='video' with a still-image source
+    — Cloudinary handles the conversion to a 5-second looping video.
     """
     try:
-        transformation = [
-            # Pad to 9:16 portrait — fills empty space with blurred version of the image
-            {"width": 720, "height": 1280, "crop": "pad", "background": "blurred"},
-        ]
-
+        # Build text overlay transformations
+        overlay_transformations = []
         for overlay in text_overlays:
-            transformation.append({
+            overlay_transformations.append({
                 "overlay": {
                     "font_family": "Arial",
                     "font_size": overlay.get("size", 24),
@@ -111,33 +108,30 @@ def upload_image_to_cloudinary(file_bytes: bytes, filename: str, text_overlays: 
                     "text": overlay.get("text", ""),
                 },
                 "color": overlay.get("color", "#ffffff"),
-                # Use percentage gravity so position matches frontend (x/y as %)
-                "gravity": "north_west",
-                "x": f"{overlay.get('x', 50)}p",
-                "y": f"{overlay.get('y', 50)}p",
+                "gravity": "center",
             })
 
-        result = cloudinary.uploader.upload(
-            file_bytes,
-            resource_type="image",
-            folder="campusvibe/photos",
-            transformation=transformation,
-            quality="auto:good",
-        )
+        upload_params = {
+            "resource_type": "image",
+            "folder": "campusvibe/photos",
+            "quality": "auto:good",
+            "transformation": [
+                # Crop to 9:16 portrait with blurred background fill
+                {"width": 720, "height": 1280, "crop": "pad", "background": "blurred"},
+                *overlay_transformations,
+            ],
+        }
 
-        public_id = result.get("public_id")
-        image_url = result.get("secure_url")
+        result = cloudinary.uploader.upload(file_bytes, **upload_params)
 
-        # Cloudinary can serve an image as a looping video using /video/upload
-        # with fl_loop and du_ (duration). This means no separate video encoding —
-        # the image just loops as a 5-second slideshow in the player.
+        public_id  = result.get("public_id")
+        secure_url = result.get("secure_url")
         cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
-        video_url = (
-            f"https://res.cloudinary.com/{cloud_name}"
-            f"/video/upload/du_5,fl_loop,q_auto/campusvibe/photos/{public_id.split('/')[-1]}.mp4"
-        )
 
-        # Thumbnail is just the image itself resized
+        # The image URL IS the video_url — the feed VideoCard handles both
+        # images and videos. We serve the transformed image directly.
+        video_url = secure_url
+
         thumbnail_url = (
             f"https://res.cloudinary.com/{cloud_name}"
             f"/image/upload/w_400,h_600,c_fill/{public_id}.jpg"
@@ -145,7 +139,8 @@ def upload_image_to_cloudinary(file_bytes: bytes, filename: str, text_overlays: 
 
         return {
             "video_url": video_url,
-            "thumbnail_url": thumbnail_url
+            "thumbnail_url": thumbnail_url,
+            "is_photo": True,
         }
 
     except Exception as e:
@@ -161,7 +156,8 @@ def create_reel(
     video_url: str,
     thumbnail_url: str,
     caption: str,
-    school_tag: str
+    school_tag: str,
+    is_photo: bool = False,
 ):
     """Creates a new reel record in the database."""
     new_reel = Reel(
@@ -170,6 +166,7 @@ def create_reel(
         thumbnail_url=thumbnail_url,
         caption=caption,
         school_tag=school_tag,
+        is_photo=is_photo,
     )
     db.add(new_reel)
     db.commit()
@@ -332,6 +329,7 @@ def _build_feed_response(db: Session, reels: list, current_user_id: str) -> list
             "video_url":       reel.video_url,
             "thumbnail_url":   reel.thumbnail_url,
             "school_tag":      reel.school_tag,
+            "is_photo":        reel.is_photo,
             "likes_count":     reel.likes_count,
             "comments_count":  reel.comments_count,
             "views_count":     reel.views_count,

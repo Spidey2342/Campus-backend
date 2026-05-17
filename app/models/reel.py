@@ -30,6 +30,7 @@ class Reel(Base):
     views_count = Column(Integer, default=0)
 
     is_active = Column(Boolean, default=True)
+    is_photo  = Column(Boolean, default=False)  # True for image posts
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationship back to the User who posted this
