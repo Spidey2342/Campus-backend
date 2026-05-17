@@ -74,6 +74,7 @@ async def upload_reel(
             thumbnail_url=upload_result["thumbnail_url"],
             caption=caption,
             school_tag=school_tag or current_user.school_name,
+            is_photo=upload_result.get("is_photo", False),
         )
 
         return {
