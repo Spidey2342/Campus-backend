@@ -117,7 +117,7 @@ def upload_image_to_cloudinary(file_bytes: bytes, filename: str, text_overlays: 
             "quality": "auto:good",
             "transformation": [
                 # Crop to 9:16 portrait with blurred background fill
-                {"width": 720, "height": 1280, "crop": "pad", "background": "blurred"},
+                {"width": 720, "height": 1280, "crop": "pad", "background": "gen_fill"},
                 *overlay_transformations,
             ],
         }
