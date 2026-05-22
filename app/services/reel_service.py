@@ -27,55 +27,50 @@ def upload_video_to_cloudinary(
     text_overlays: list = []
 ) -> dict:
     try:
-        transformation = []
+        # Upload the raw video — NO transformations at upload time
+        # Large videos can't be transformed synchronously on Cloudinary's free tier
+        # Instead we bake trim + overlays into the delivery URL below
+        upload_params = {
+            "resource_type": "video",
+            "folder": "campusvibe/reels",
+            "quality": "auto:low",
+        }
 
-        if trim_start is not None or trim_end is not None:
-            trim = {}
-            if trim_start: trim["start_offset"] = str(trim_start)
-            if trim_end: trim["end_offset"] = str(trim_end)
-            transformation.append(trim)
+        result = cloudinary.uploader.upload(file_bytes, **upload_params)
+
+        public_id  = result.get("public_id")
+        cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+
+        # Build transformation string for delivery URL
+        # Cloudinary applies these on-the-fly when the video is served
+        transforms = []
+
+        if trim_start and float(trim_start) > 0:
+            transforms.append(f"so_{trim_start}")
+        if trim_end and float(trim_end) > 0:
+            transforms.append(f"eo_{trim_end}")
 
         for overlay in text_overlays:
-            transformation.append({
-                "overlay": {
-                    "font_family": "Arial",
-                    "font_size": overlay.get("size", 24),
-                    "font_weight": "bold",
-                    "text": overlay.get("text", ""),
-                },
-                "color": overlay.get("color", "#ffffff"),
-                "gravity": "center",
-                "y": 0,
-            })
+            text  = overlay.get("text", "").replace(" ", "%20").replace(",", "%2C")
+            size  = overlay.get("size", 24)
+            color = overlay.get("color", "white").lstrip("#")
+            transforms.append(f"l_text:Arial_{size}_bold:{text},co_rgb:{color},g_center")
 
-        # Upload params
-        upload_params = {
-    "resource_type": "video",
-    "folder": "campusvibe/reels",
-    "quality": "auto:low",    # 👈 compress aggressively
-    "fetch_format": "auto",   # 👈 serve best format (mp4/webm)
-}
+        transform_str = "/".join(transforms)
+        if transform_str:
+            video_url = (
+                f"https://res.cloudinary.com/{cloud_name}"
+                f"/video/upload/{transform_str}/{public_id}.mp4"
+            )
+        else:
+            video_url = (
+                f"https://res.cloudinary.com/{cloud_name}"
+                f"/video/upload/{public_id}.mp4"
+            )
 
-        # If we have transformations use eager_async
-        # This means Cloudinary processes them in the background
-        # instead of making the user wait
-        if transformation:
-            upload_params["eager"] = transformation
-            upload_params["eager_async"] = True  # 👈 process in background
-        
-        result = cloudinary.uploader.upload(
-            file_bytes,
-            **upload_params
-        )
-
-        video_url = result.get("secure_url")
-        public_id = result.get("public_id")
-
-        # Thumbnail generated from the raw uploaded video
-        # not from the transformation — so it's always available immediately
+        # Thumbnail — grab frame at 1 second
         thumbnail_url = (
-            f"https://res.cloudinary.com/"
-            f"{os.getenv('CLOUDINARY_CLOUD_NAME')}"
+            f"https://res.cloudinary.com/{cloud_name}"
             f"/video/upload/so_1,w_400,h_600,c_fill/{public_id}.jpg"
         )
 
