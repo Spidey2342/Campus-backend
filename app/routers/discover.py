@@ -404,3 +404,35 @@ async def search(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/universities")
+async def search_universities(
+    q: str,
+    current_user=Depends(get_current_user)
+):
+    """
+    Proxy for Hipolabs university search — avoids CORS and service worker
+    interception issues when calling from the browser directly.
+    """
+    import httpx
+    if len(q.strip()) < 2:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://universities.hipolabs.com/search",
+                params={"name": q.strip(), "limit": 8}
+            )
+            data = resp.json()
+            return [
+                {
+                    "name": u.get("name"),
+                    "country": u.get("country"),
+                    "alpha_two_code": u.get("alpha_two_code"),
+                    "domains": u.get("domains", []),
+                }
+                for u in data
+                if u.get("name")
+            ]
+    except Exception:
+        return []
