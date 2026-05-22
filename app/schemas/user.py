@@ -33,6 +33,8 @@ class UserResponse(BaseModel):
     year_of_study: Optional[str] = None
     avatar_url: Optional[str] = None
     is_verified: bool
+    is_admin: bool = False
+    is_founding_member: bool = False
     created_at: datetime
 
     # This tells Pydantic to read data from SQLAlchemy objects

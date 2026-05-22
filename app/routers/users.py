@@ -196,3 +196,48 @@ def save_fcm_token(
     current_user.fcm_token = body.fcm_token
     db.commit()
     return {"message": "Token saved"}
+
+@router.get("/founding-members")
+def get_founding_members(
+    db: Session = Depends(get_db),
+):
+    """
+    Returns the first 100 users (founding members) for the homepage feature strip.
+    Public endpoint — no auth required so it works on the welcome page too.
+    """
+    members = (
+        db.query(User)
+        .filter(
+            User.is_active == True,
+            User.is_founding_member == True,
+        )
+        .order_by(User.created_at.asc())
+        .limit(100)
+        .all()
+    )
+    return [
+        {
+            "id":         m.id,
+            "username":   m.username,
+            "avatar_url": m.avatar_url,
+            "school_name": m.school_name,
+        }
+        for m in members
+    ]
+
+
+@router.post("/grant-founding/{username}")
+def grant_founding_member(
+    username: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Admin only — mark a user as a founding member."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_founding_member = True
+    db.commit()
+    return {"message": f"@{username} is now a founding member"}
