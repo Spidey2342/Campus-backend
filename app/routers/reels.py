@@ -187,20 +187,28 @@ async def get_comments(
             db.query(Comment)
             .filter(Comment.reel_id == reel_id)
             .order_by(Comment.created_at.desc())
+            .limit(50)  # pagination — never load more than 50 at once
             .all()
         )
-        result = []
-        for c in comments:
-            owner = db.query(User).filter(User.id == c.user_id).first()
-            result.append({
-                "id": c.id,
-                "text": c.text,
-                "user_id": c.user_id,
-                "username": owner.username if owner else None,
-                "avatar_url": owner.avatar_url if owner else None,
+
+        # Bulk fetch all comment owners in ONE query instead of N queries
+        user_ids = list({c.user_id for c in comments})
+        owners = {
+            u.id: u for u in
+            db.query(User).filter(User.id.in_(user_ids)).all()
+        }
+
+        return [
+            {
+                "id":         c.id,
+                "text":       c.text,
+                "user_id":    c.user_id,
+                "username":   owners[c.user_id].username   if c.user_id in owners else None,
+                "avatar_url": owners[c.user_id].avatar_url if c.user_id in owners else None,
                 "created_at": c.created_at,
-            })
-        return result
+            }
+            for c in comments
+        ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -28,19 +28,27 @@ def get_profile(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Count followers — how many people follow this user
+    # Count followers and following
     followers_count = db.query(Follow).filter(
         Follow.following_id == user.id
     ).count()
 
-    # Count following — how many people this user follows
     following_count = db.query(Follow).filter(
         Follow.follower_id == user.id
     ).count()
 
-    # Count total likes across all their reels
-    reels = db.query(Reel).filter(Reel.owner_id == user.id).all()
-    total_likes = sum(r.likes_count for r in reels)
+    # Use aggregates — never load all reels into memory just to count them
+    from sqlalchemy import func as sqlfunc
+    stats = db.query(
+        sqlfunc.count(Reel.id).label("reels_count"),
+        sqlfunc.coalesce(sqlfunc.sum(Reel.likes_count), 0).label("total_likes")
+    ).filter(
+        Reel.owner_id == user.id,
+        Reel.is_active == True
+    ).first()
+
+    reels_count = stats.reels_count if stats else 0
+    total_likes = stats.total_likes if stats else 0
 
     # Check if the current logged in user follows this profile
     is_following = db.query(Follow).filter(
@@ -58,10 +66,12 @@ def get_profile(
         "programme": user.programme,
         "year_of_study": user.year_of_study,
         "is_verified": user.is_verified,
+        "is_admin": user.is_admin,
+        "is_founding_member": user.is_founding_member,
         "followers_count": followers_count,
         "following_count": following_count,
         "total_likes": total_likes,
-        "reels_count": len(reels),
+        "reels_count": reels_count,
         "is_following": is_following,
         "is_own_profile": current_user.id == user.id,
     }
