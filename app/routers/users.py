@@ -80,6 +80,8 @@ def get_profile(
 @router.get("/profile/{username}/reels")
 def get_user_reels(
     username: str,
+    skip: int = 0,
+    limit: int = 21,  # 7 rows of 3 — clean grid increments
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -88,11 +90,13 @@ def get_user_reels(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Get all their reels newest first
+    # Paginated — never load a user's entire reel history at once
     reels = (
         db.query(Reel)
         .filter(Reel.owner_id == user.id, Reel.is_active == True)
         .order_by(Reel.created_at.desc())
+        .offset(skip)
+        .limit(min(limit, 30))  # hard cap to prevent abuse
         .all()
     )
 

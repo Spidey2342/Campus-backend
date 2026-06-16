@@ -20,6 +20,13 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
 # --- RESPONSE schemas (data going OUT) ---
 # Notice: no password field — we never send that back
 

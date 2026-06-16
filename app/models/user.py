@@ -25,6 +25,8 @@ class User(Base):
     is_founding_member = Column(Boolean, default=False)
     avatar_url = Column(String, nullable=True)
     fcm_token = Column(String, nullable=True)  # 👈 just the column, no route
+    reset_token = Column(String, nullable=True)
+    reset_token_expires = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
