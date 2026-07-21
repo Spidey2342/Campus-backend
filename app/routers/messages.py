@@ -145,20 +145,84 @@ def get_conversations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get all conversations for the current user."""
     memberships = db.query(ConversationMember).filter(
         ConversationMember.user_id == current_user.id
     ).all()
+    conv_ids = [m.conversation_id for m in memberships]
+    if not conv_ids:
+        return []
 
-    conversations = []
-    for m in memberships:
-        conv = db.query(Conversation).filter(Conversation.id == m.conversation_id).first()
-        if conv:
-            conversations.append(get_conversation_detail(db, conv, current_user.id))
+    convs = {c.id: c for c in db.query(Conversation).filter(Conversation.id.in_(conv_ids)).all()}
 
-    # Sort by most recent message
-    conversations.sort(key=lambda x: x["last_message_time"] or datetime.min, reverse=True)
-    return conversations
+    # all members of all my conversations, in one query
+    all_members = db.query(ConversationMember).filter(
+        ConversationMember.conversation_id.in_(conv_ids)
+    ).all()
+    members_by_conv = {}
+    for m in all_members:
+        members_by_conv.setdefault(m.conversation_id, []).append(m)
+
+    # last message per conversation — one query, grouped in Python
+    # (Postgres DISTINCT ON is cleaner, but this keeps it portable)
+    from sqlalchemy import desc as _desc
+    recent_msgs = (
+        db.query(Message)
+        .filter(Message.conversation_id.in_(conv_ids))
+        .order_by(Message.conversation_id, _desc(Message.created_at))
+        .all()
+    )
+    last_msg_by_conv = {}
+    for m in recent_msgs:
+        if m.conversation_id not in last_msg_by_conv:
+            last_msg_by_conv[m.conversation_id] = m
+
+    # other-user lookups for DMs — one query for all the "other" user ids
+    other_user_ids = set()
+    for conv_id, members in members_by_conv.items():
+        conv = convs.get(conv_id)
+        if conv and conv.type == "dm":
+            other = next((m for m in members if m.user_id != current_user.id), None)
+            if other:
+                other_user_ids.add(other.user_id)
+    other_users = {u.id: u for u in db.query(User).filter(User.id.in_(other_user_ids)).all()}
+
+    result = []
+    for conv_id, conv in convs.items():
+        members = members_by_conv.get(conv_id, [])
+        my_membership = next((m for m in members if m.user_id == current_user.id), None)
+        last_read = my_membership.last_read_at if my_membership else None
+        last_message = last_msg_by_conv.get(conv_id)
+
+        unread_count = 0
+        if last_read:
+            unread_count = db.query(Message).filter(
+                Message.conversation_id == conv_id,
+                Message.created_at > last_read,
+                Message.sender_id != current_user.id
+            ).count()  # still one query per conv — see note below
+
+        other_user = None
+        if conv.type == "dm":
+            other_member = next((m for m in members if m.user_id != current_user.id), None)
+            if other_member:
+                other_user = other_users.get(other_member.user_id)
+
+        result.append({
+            "id": conv.id,
+            "type": conv.type,
+            "name": other_user.full_name if other_user else conv.name,
+            "username": other_user.username if other_user else None,
+            "avatar_url": other_user.avatar_url if other_user else conv.avatar_url,
+            "school_name": other_user.school_name if other_user else None,
+            "members_count": len(members),
+            "last_message": last_message.text if last_message else None,
+            "last_message_time": last_message.created_at if last_message else conv.created_at,
+            "unread_count": unread_count,
+            "updated_at": conv.updated_at or conv.created_at,
+        })
+
+    result.sort(key=lambda x: x["last_message_time"] or datetime.min, reverse=True)
+    return result
 
 
 @router.post("/conversations/dm/{username}")
@@ -249,24 +313,16 @@ def get_messages(
 ):
     """Get messages for a conversation."""
     # Check membership
-    member = db.query(ConversationMember).filter(
-        ConversationMember.conversation_id == conversation_id,
-        ConversationMember.user_id == current_user.id
-    ).first()
-    if not member:
-        raise HTTPException(status_code=403, detail="Not a member")
-
-    # Mark as read
-    member.last_read_at = datetime.utcnow()
-    db.commit()
-
     messages = db.query(Message).filter(
         Message.conversation_id == conversation_id
     ).order_by(desc(Message.created_at)).offset(skip).limit(limit).all()
 
+    sender_ids = {m.sender_id for m in messages if m.sender_id}
+    senders = {u.id: u for u in db.query(User).filter(User.id.in_(sender_ids)).all()}
+
     result = []
-    for m in reversed(messages):  # oldest first
-        sender = db.query(User).filter(User.id == m.sender_id).first() if m.sender_id else None
+    for m in reversed(messages):
+        sender = senders.get(m.sender_id)
         result.append({
             "id": m.id,
             "text": m.text,
@@ -278,7 +334,6 @@ def get_messages(
             "created_at": m.created_at,
             "is_mine": m.sender_id == current_user.id,
         })
-
     return result
 
 

@@ -80,12 +80,21 @@ def list_reports(
         query = query.filter(Report.status == status)
 
     reports = query.order_by(Report.created_at.desc()).offset(skip).limit(limit).all()
+    if not reports:
+        return []
+
+    reporter_ids = {r.reporter_id for r in reports}
+    reel_ids = {r.reel_id for r in reports if r.reel_id}
+    reported_user_ids = {r.reported_user_id for r in reports if r.reported_user_id}
+
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(reporter_ids | reported_user_ids)).all()}
+    reels = {r.id: r for r in db.query(Reel).filter(Reel.id.in_(reel_ids)).all()}
 
     result = []
     for r in reports:
-        reporter = db.query(User).filter(User.id == r.reporter_id).first()
-        reel = db.query(Reel).filter(Reel.id == r.reel_id).first() if r.reel_id else None
-        reported_user = db.query(User).filter(User.id == r.reported_user_id).first() if r.reported_user_id else None
+        reporter = users.get(r.reporter_id)
+        reel = reels.get(r.reel_id) if r.reel_id else None
+        reported_user = users.get(r.reported_user_id) if r.reported_user_id else None
 
         result.append({
             "id": r.id,

@@ -45,7 +45,7 @@ def get_current_user(
 # 5 registration attempts per hour per IP
 @router.post("/register", response_model=TokenResponse, status_code=201)
 @limiter.limit("5/hour")
-async def register(
+def register(
     request: Request,  # required for rate limiting
     user_data: UserRegister,
     db: Session = Depends(get_db)
@@ -70,7 +70,7 @@ async def register(
 # 10 login attempts per minute per IP — prevents brute force
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
-async def login(
+def login(
     request: Request,
     credentials: UserLogin,
     db: Session = Depends(get_db)
@@ -98,13 +98,13 @@ async def login(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
+def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 # 3 forgot-password requests per hour per IP — prevents email bombing
 @router.post("/forgot-password")
 @limiter.limit("3/hour")
-async def forgot_password(
+def forgot_password(
     request: Request,
     body: ForgotPasswordRequest,
     db: Session = Depends(get_db)
@@ -130,7 +130,7 @@ async def forgot_password(
 
 @router.post("/reset-password")
 @limiter.limit("5/hour")
-async def reset_password(
+def reset_password(
     request: Request,
     body: ResetPasswordRequest,
     db: Session = Depends(get_db)

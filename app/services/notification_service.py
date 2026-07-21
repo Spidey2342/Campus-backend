@@ -52,9 +52,18 @@ def get_notifications(db: Session, user_id: str, skip: int = 0, limit: int = 20)
         .all()
     )
 
+    if not notifications:
+        return []
+
+    sender_ids = {n.sender_id for n in notifications}
+    senders = {
+        u.id: u
+        for u in db.query(User).filter(User.id.in_(sender_ids)).all()
+    }
+
     result = []
     for n in notifications:
-        sender = db.query(User).filter(User.id == n.sender_id).first()
+        sender = senders.get(n.sender_id)
         result.append({
             "id": n.id,
             "type": n.type,

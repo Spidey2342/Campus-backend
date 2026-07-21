@@ -8,6 +8,8 @@ from app.models.user import User
 import os
 from dotenv import load_dotenv
 import random
+import hashlib
+from datetime import date
 from sqlalchemy import func
 
 load_dotenv()
@@ -338,9 +340,19 @@ def _build_feed_response(db: Session, reels: list, current_user_id: str) -> list
 
     return result
 
+def _rotating_query(base_query, seed: float, limit: int):
+    """Page through random_rank starting at `seed`, wrapping around."""
+    first = base_query.filter(Reel.random_rank >= seed) \
+                       .order_by(Reel.random_rank.asc()).limit(limit).all()
+    if len(first) < limit:
+        remaining = limit - len(first)
+        wrapped = base_query.filter(Reel.random_rank < seed) \
+                             .order_by(Reel.random_rank.asc()).limit(remaining).all()
+        first += wrapped
+    return first
+
 
 def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10):
-
     if feed_type == "following":
         following_subq = (
             db.query(Follow.following_id)
@@ -349,10 +361,7 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
         )
         reels = (
             db.query(Reel)
-            .filter(
-                Reel.owner_id.in_(following_subq),
-                Reel.is_active == True
-            )
+            .filter(Reel.owner_id.in_(following_subq), Reel.is_active == True)
             .order_by(desc(Reel.created_at))
             .offset(skip)
             .limit(limit)
@@ -360,96 +369,36 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
         )
         return _build_feed_response(db, reels, current_user_id)
 
-    # ── FOR YOU ──────────────────────────────────────────────────────────────
-    # Strategy:
-    # - Never show your own reels
-    # - 5% chance of showing your reel to others (handled on their feeds)
-    # - Use a per-user daily seed so ordering feels consistent within a session
-    #   but changes the next day — no repeats within one scroll session
-    # - When skip >= total reels (feed exhausted), loop back from 0 with a
-    #   new seed so the feed never actually ends
-    # - 65% same school, 35% other schools for a good mix
-
-    import hashlib
-    from datetime import date
-
-    # Seed = user_id + today's date — stable within a day, different tomorrow
-    seed_str = f"{current_user_id}{date.today().isoformat()}"
-    seed_hash = int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % 999983
-
-    total_active = db.query(func.count(Reel.id)).filter(
-        Reel.is_active == True,
-        Reel.owner_id != current_user_id,
-    ).scalar() or 0
-
-    # If we've scrolled past all reels, loop back with a shifted seed
-    # so content reshuffles instead of stopping
-    effective_skip = skip
-    loop_offset = 0
-    if total_active > 0 and skip >= total_active:
-        loop_offset = (skip // total_active) * 7  # shift seed each loop
-        effective_skip = skip % total_active
-
-    seed_expr = text("MD5(reels.id || CAST(:seed AS TEXT))")
-    seed_val = seed_hash + loop_offset
+    # seed shifts once per day, and again every time you loop past the end
+    seed_str = f"{current_user_id}{date.today().isoformat()}{skip // 200}"
+    seed_hash = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
+    seed_val = (seed_hash % 1000) / 1000.0  # float in [0, 1)
 
     current_user = db.query(User).filter(User.id == current_user_id).first()
-    user_school  = current_user.school_name if current_user else None
+    user_school = current_user.school_name if current_user else None
+
+    base = db.query(Reel).join(User, Reel.owner_id == User.id).filter(
+        Reel.is_active == True,
+        Reel.owner_id != current_user_id,
+    )
 
     if user_school:
-        same_school_reels = (
-            db.query(Reel)
-            .join(User, Reel.owner_id == User.id)
-            .filter(
-                Reel.is_active == True,
-                Reel.owner_id != current_user_id,
-                User.school_name == user_school
-            )
-            .order_by(seed_expr)
-            .params(seed=seed_val)
-            .limit(int(limit * 0.65))
-            .offset(effective_skip)
-            .all()
+        same_school = _rotating_query(
+            base.filter(User.school_name == user_school), seed_val, int(limit * 0.65)
         )
-
-        other_school_reels = (
-            db.query(Reel)
-            .join(User, Reel.owner_id == User.id)
-            .filter(
-                Reel.is_active == True,
-                Reel.owner_id != current_user_id,
-                User.school_name != user_school
-            )
-            .order_by(seed_expr)
-            .params(seed=seed_val)
-            .limit(int(limit * 0.35))
-            .offset(effective_skip)
-            .all()
+        other_school = _rotating_query(
+            base.filter(User.school_name != user_school), seed_val, int(limit * 0.35)
         )
-
-        # Interleave: ~2 same-school then 1 other, repeat
         reels, s, o = [], 0, 0
         for i in range(limit):
-            if i % 3 == 2 and o < len(other_school_reels):
-                reels.append(other_school_reels[o]); o += 1
-            elif s < len(same_school_reels):
-                reels.append(same_school_reels[s]); s += 1
-            elif o < len(other_school_reels):
-                reels.append(other_school_reels[o]); o += 1
-
+            if i % 3 == 2 and o < len(other_school):
+                reels.append(other_school[o]); o += 1
+            elif s < len(same_school):
+                reels.append(same_school[s]); s += 1
+            elif o < len(other_school):
+                reels.append(other_school[o]); o += 1
     else:
-        reels = (
-            db.query(Reel)
-            .filter(
-                Reel.is_active == True,
-                Reel.owner_id != current_user_id,
-            )
-            .order_by(seed_expr)
-            .params(seed=seed_val)
-            .offset(effective_skip)
-            .limit(limit)
-            .all()
-        )
+        reels = _rotating_query(base, seed_val, limit)
 
     return _build_feed_response(db, reels, current_user_id)
 

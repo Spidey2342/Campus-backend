@@ -14,7 +14,7 @@ router = APIRouter(prefix="/discover", tags=["Discover"])
 limiter = Limiter(key_func=get_remote_address)
 @router.get("/search")
 @limiter.limit("30/minute")
-async def search(
+def search(
     request: Request,
     q: str = Query(..., min_length=1, max_length=100),
     db: Session = Depends(get_db),
@@ -107,60 +107,34 @@ def top_schools(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Returns schools ranked by number of followers.
-    Groups users by school_name and counts followers.
-    """
-    # Get all unique schools
-    schools_raw = (
-        db.query(User.school_name)
+    rows = (
+        db.query(
+            User.school_name,
+            func.count(func.distinct(User.id)).label("members"),
+            func.count(Reel.id).label("reels_count"),
+            func.coalesce(func.sum(Reel.views_count), 0).label("total_views"),
+        )
+        .outerjoin(Reel, (Reel.owner_id == User.id) & (Reel.is_active == True))
         .filter(User.school_name != None, User.is_active == True)
-        .distinct()
+        .group_by(User.school_name)
+        .order_by(desc("total_views"))
+        .limit(10)
         .all()
     )
+    return [
+        {
+            "school_name": r.school_name,
+            "members": r.members,
+            "reels_count": r.reels_count,
+            "total_views": r.total_views,
+        }
+        for r in rows
+    ]
 
-    result = []
-    for (school_name,) in schools_raw:
-        if not school_name:
-            continue
 
-        # Count members (students at this school)
-        members = db.query(User).filter(
-            User.school_name == school_name
-        ).count()
 
-        # Count total reels from this school
-        reels_count = (
-            db.query(Reel)
-            .join(User, Reel.owner_id == User.id)
-            .filter(
-                User.school_name == school_name,
-                Reel.is_active == True
-            )
-            .count()
-        )
-
-        # Count total views across all reels from this school
-        total_views = (
-            db.query(func.sum(Reel.views_count))
-            .join(User, Reel.owner_id == User.id)
-            .filter(User.school_name == school_name)
-            .scalar() or 0
-        )
-
-        result.append({
-            "school_name": school_name,
-            "members": members,
-            "reels_count": reels_count,
-            "total_views": total_views,
-        })
-
-    # Sort by total views — most viewed school first
-    result.sort(key=lambda x: x["total_views"], reverse=True)
-
-    return result[:10]  # top 10 schools
 @router.get("/school/{school_name}")
-async def get_school_detail(
+def get_school_detail(
     school_name: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -221,7 +195,7 @@ async def get_school_detail(
 
 
 @router.get("/hashtag/{tag}")
-async def get_reels_by_hashtag(
+def get_reels_by_hashtag(
     tag: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -337,73 +311,6 @@ def reels_by_category(
         }
         for r in reels
     ]
-
-# 30 searches per minute
-@router.get("/search")
-@limiter.limit("30/minute")
-async def search(
-    request: Request,
-    q: str = Query(..., min_length=1, max_length=100),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    try:
-        query = f"%{q}%"
-        users = (
-            db.query(User)
-            .filter(
-                User.is_active == True,
-                (
-                    User.username.ilike(query) |
-                    User.full_name.ilike(query) |
-                    User.school_name.ilike(query)
-                )
-            )
-            .limit(10)
-            .all()
-        )
-        reels = (
-            db.query(Reel)
-            .filter(
-                Reel.is_active == True,
-                (
-                    Reel.caption.ilike(query) |
-                    Reel.school_tag.ilike(query)
-                )
-            )
-            .order_by(desc(Reel.views_count))
-            .limit(10)
-            .all()
-        )
-        return {
-            "users": [
-                {
-                    "id": u.id,
-                    "username": u.username,
-                    "full_name": u.full_name,
-                    "avatar_url": u.avatar_url,
-                    "school_name": u.school_name,
-                    "is_verified": u.is_verified,
-                }
-                for u in users
-            ],
-            "reels": [
-                {
-                    "id": r.id,
-                    "caption": r.caption,
-                    "thumbnail_url": r.thumbnail_url,
-                    "video_url": r.video_url,
-                    "views_count": r.views_count,
-                    "likes_count": r.likes_count,
-                    "school_tag": r.school_tag,
-                }
-                for r in reels
-            ]
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/universities")
 async def search_universities(

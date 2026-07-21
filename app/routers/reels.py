@@ -93,7 +93,7 @@ async def upload_reel(
 
 @router.get("/feed")
 @limiter.limit("60/minute")
-async def get_reel_feed(
+def get_reel_feed(
     request: Request,
     type: str = Query(default="foryou"),
     skip: int = Query(default=0, ge=0),
@@ -111,7 +111,7 @@ async def get_reel_feed(
 
 @router.post("/{reel_id}/like")
 @limiter.limit("30/minute")
-async def like_reel(
+def like_reel(
     request: Request,
     reel_id: str,
     db: Session = Depends(get_db),
@@ -142,7 +142,7 @@ async def like_reel(
 # ✅ SINGLE comment route — with notification
 @router.post("/{reel_id}/comment", status_code=201)
 @limiter.limit("20/minute")
-async def comment_on_reel(
+def comment_on_reel(
     request: Request,
     reel_id: str,
     comment_data: CommentCreate,
@@ -177,7 +177,7 @@ async def comment_on_reel(
 
 # ✅ GET comments — must be BEFORE /{reel_id}
 @router.get("/{reel_id}/comments")
-async def get_comments(
+def get_comments(
     reel_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -214,7 +214,7 @@ async def get_comments(
 
 
 @router.post("/{reel_id}/view")
-async def view_reel(
+def view_reel(
     reel_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -226,7 +226,7 @@ async def view_reel(
 
 
 @router.delete("/{reel_id}")
-async def delete_reel(
+def delete_reel(
     reel_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -248,7 +248,7 @@ async def delete_reel(
 
 # ✅ Single reel — always LAST because /{reel_id} matches everything
 @router.get("/{reel_id}")
-async def get_single_reel(
+def get_single_reel(
     reel_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)

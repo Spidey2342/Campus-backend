@@ -1,4 +1,5 @@
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey
+import random
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -37,6 +38,7 @@ class Reel(Base):
     owner = relationship("User", back_populates="reels")
     likes = relationship("Like", back_populates="reel")
     comments = relationship("Comment", back_populates="reel")
+    random_rank = Column(Float, default=random.random, index=True)
 
 class Follow(Base):
     __tablename__ = "follows"
