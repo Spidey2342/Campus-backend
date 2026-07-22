@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -15,6 +15,18 @@ class UserRegister(BaseModel):
     school_name: Optional[str] = None
     programme: Optional[str] = None
     year_of_study: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def password_must_be_strong_enough(cls, v: str) -> str:
+        # Same floor as reset-password (see auth.py) — kept in one place
+        # conceptually, just enforced at the schema level here since
+        # registration doesn't go through reset_password's manual check.
+        if len(v) < 6:
+            raise ValueError("Password must be at least 6 characters")
+        if len(v) > 128:
+            raise ValueError("Password is too long")
+        return v
 
 class UserLogin(BaseModel):
     email: EmailStr

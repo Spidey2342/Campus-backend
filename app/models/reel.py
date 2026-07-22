@@ -107,6 +107,30 @@ class Notification(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+class Listing(Base):
+    __tablename__ = "listings"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    seller_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    title = Column(String(80), nullable=False)
+    description = Column(Text, nullable=False)
+    price = Column(Float, nullable=False)
+    currency = Column(String(6), default="GHS")
+    category = Column(String(30), nullable=False)
+
+    # Cloudinary URLs, stored as a JSON array of strings (max 4 enforced in the router)
+    photo_urls = Column(Text, nullable=True)  # JSON-encoded list — see marketplace_service.py
+
+    school_name = Column(String(200), nullable=True)  # snapshot from seller at post time
+    status = Column(String(20), default="active")  # "active" | "sold" | "removed"
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    seller = relationship("User")
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -116,11 +140,16 @@ class Conversation(Base):
     name = Column(String(100), nullable=True)  # group name
     avatar_url = Column(String, nullable=True)  # group avatar
     created_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # If this DM started from a marketplace listing, this pins which one —
+    # used to show the "pinned listing card" in the chat UI. Nullable so it
+    # doesn't affect normal DMs/groups at all.
+    listing_id = Column(String, ForeignKey("listings.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
     messages = relationship("Message", back_populates="conversation")
     members = relationship("ConversationMember", back_populates="conversation")
+    listing = relationship("Listing")
 
 
 class ConversationMember(Base):

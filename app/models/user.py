@@ -23,6 +23,15 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
     is_founding_member = Column(Boolean, default=False)
+
+    # --- Marketplace seller status ---
+    # "trial"      — self-serve 7-day free trial, anyone can start it
+    # "admin_free" — hand-picked by an admin, free permanently, no trial clock
+    # "paid"       — subscribed after their trial ended (payment not wired yet)
+    # NULL         — not a seller; can browse/buy but "+" routes to become-seller
+    seller_source = Column(String(20), nullable=True)
+    seller_trial_ends_at = Column(DateTime(timezone=True), nullable=True)
+
     avatar_url = Column(String, nullable=True)
     fcm_token = Column(String, nullable=True)  # 👈 just the column, no route
     reset_token = Column(String, nullable=True)

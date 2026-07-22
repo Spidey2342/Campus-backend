@@ -79,6 +79,24 @@ def get_conversation_detail(db: Session, conversation: Conversation, current_use
         if other_member:
             other_user = db.query(User).filter(User.id == other_member.user_id).first()
 
+    # If this thread started from a marketplace listing, include a snapshot
+    # of it so the chat UI can show the pinned listing card. Ordinary DMs
+    # and groups just get listing: None here.
+    listing_snapshot = None
+    if conversation.listing_id:
+        from app.models.reel import Listing
+        from app.services.marketplace_service import decode_photo_urls
+        listing = db.query(Listing).filter(Listing.id == conversation.listing_id).first()
+        if listing:
+            photos = decode_photo_urls(listing.photo_urls)
+            listing_snapshot = {
+                "listing_id": listing.id,
+                "title": listing.title,
+                "price": listing.price,
+                "currency": listing.currency,
+                "thumbnail": photos[0] if photos else None,
+            }
+
     return {
         "id": conversation.id,
         "type": conversation.type,
@@ -91,6 +109,7 @@ def get_conversation_detail(db: Session, conversation: Conversation, current_use
         "last_message_time": last_message.created_at if last_message else conversation.created_at,
         "unread_count": unread_count,
         "updated_at": conversation.updated_at or conversation.created_at,
+        "listing": listing_snapshot,
     }
 
 
