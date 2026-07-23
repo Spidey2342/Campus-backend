@@ -352,7 +352,7 @@ def _rotating_query(base_query, seed: float, limit: int):
     return first
 
 
-def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10):
+def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10, loop: int = 0):
     if feed_type == "following":
         following_subq = (
             db.query(Follow.following_id)
@@ -370,7 +370,7 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
         return _build_feed_response(db, reels, current_user_id)
 
     # seed shifts once per day, and again every time you loop past the end
-    seed_str = f"{current_user_id}{date.today().isoformat()}{skip // 200}"
+    seed_str = f"{current_user_id}{date.today().isoformat()}{skip // 200}{loop}"
     seed_hash = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
     seed_val = (seed_hash % 1000) / 1000.0  # float in [0, 1)
 

@@ -91,18 +91,19 @@ async def upload_reel(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/feed")
+@@router.get("/feed")
 @limiter.limit("60/minute")
 def get_reel_feed(
     request: Request,
     type: str = Query(default="foryou"),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=10, le=20),
+    loop: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     try:
-        return get_feed(db, current_user.id, type, skip, limit)
+        return get_feed(db, current_user.id, type, skip, limit, loop)
     except Exception as e:
         import traceback
         traceback.print_exc()
