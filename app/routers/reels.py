@@ -91,7 +91,7 @@ async def upload_reel(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@@router.get("/feed")
+@router.get("/feed")
 @limiter.limit("60/minute")
 def get_reel_feed(
     request: Request,
