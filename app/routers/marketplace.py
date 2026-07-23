@@ -4,7 +4,7 @@ from sqlalchemy import desc
 from typing import Optional, List
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-
+from pydantic import BaseModel
 from app.database import get_db
 from app.routers.auth import get_current_user
 from app.models.user import User
@@ -237,6 +237,83 @@ def delete_listing(
     db.commit()
     return {"message": "Listing removed"}
 
+
+class ListingStatusUpdate(BaseModel):
+    status: str  # "active" | "sold"
+
+
+@router.patch("/listings/{listing_id}/status", response_model=ListingResponse)
+def update_listing_status(
+    listing_id: str,
+    body: ListingStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if body.status not in ("active", "sold"):
+        raise HTTPException(status_code=400, detail="Status must be 'active' or 'sold'")
+
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing.seller_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your listing")
+
+    listing.status = body.status
+    db.commit()
+    db.refresh(listing)
+    return _serialize(listing)
+
+
+@router.patch("/listings/{listing_id}", response_model=ListingResponse)
+async def edit_listing(
+    listing_id: str,
+    title: str = Form(...),
+    description: str = Form(...),
+    price: float = Form(...),
+    category: str = Form(...),
+    keep_photo_urls: List[str] = Form(default=[]),  # existing Cloudinary URLs the seller kept
+    new_photos: List[UploadFile] = File(default=[]),  # newly added photos
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing.seller_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your listing")
+
+    title = title.strip()
+    description = description.strip()
+    if not title or len(title) > 80:
+        raise HTTPException(status_code=400, detail="Title must be 1-80 characters")
+    if not description or len(description) > 500:
+        raise HTTPException(status_code=400, detail="Description must be 1-500 characters")
+    if price <= 0 or price > 1_000_000:
+        raise HTTPException(status_code=400, detail="Enter a valid price")
+    if category not in CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Category must be one of: {', '.join(CATEGORIES)}")
+
+    total_photos = len(keep_photo_urls) + len(new_photos)
+    if total_photos > MAX_LISTING_PHOTOS:
+        raise HTTPException(status_code=400, detail=f"Max {MAX_LISTING_PHOTOS} photos")
+
+    photo_urls = list(keep_photo_urls)
+    for photo in new_photos:
+        if not photo.content_type or not photo.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Photos must be images")
+        file_bytes = await photo.read()
+        if len(file_bytes) > MAX_PHOTO_SIZE_BYTES:
+            raise HTTPException(status_code=400, detail="Each photo must be under 8MB")
+        photo_urls.append(upload_listing_photo(file_bytes))
+
+    listing.title = title
+    listing.description = description
+    listing.price = price
+    listing.category = category
+    listing.photo_urls = encode_photo_urls(photo_urls)
+    db.commit()
+    db.refresh(listing)
+    return _serialize(listing)
 
 # --- LISTING CHAT ---
 # Reuses the exact same Conversation/ConversationMember/Message models as
