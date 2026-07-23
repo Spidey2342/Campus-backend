@@ -340,16 +340,29 @@ def _build_feed_response(db: Session, reels: list, current_user_id: str) -> list
 
     return result
 
-def _rotating_query(base_query, seed: float, limit: int):
-    """Page through random_rank starting at `seed`, wrapping around."""
-    first = base_query.filter(Reel.random_rank >= seed) \
-                       .order_by(Reel.random_rank.asc()).limit(limit).all()
-    if len(first) < limit:
-        remaining = limit - len(first)
-        wrapped = base_query.filter(Reel.random_rank < seed) \
-                             .order_by(Reel.random_rank.asc()).limit(remaining).all()
-        first += wrapped
-    return first
+def _rotating_query(base_query, seed: float, limit: int, offset: int = 0):
+    """Page through random_rank starting at `seed`, wrapping around circularly.
+    `offset` advances through the *already-seeded* window — without it, every
+    page request (regardless of skip) returns the same starting slice."""
+    first_q = base_query.filter(Reel.random_rank >= seed).order_by(Reel.random_rank.asc())
+    first_count = first_q.count()
+
+    if offset < first_count:
+        first = first_q.offset(offset).limit(limit).all()
+        if len(first) < limit:
+            remaining = limit - len(first)
+            wrapped = base_query.filter(Reel.random_rank < seed) \
+                                 .order_by(Reel.random_rank.asc()) \
+                                 .limit(remaining).all()
+            first += wrapped
+        return first
+
+    # Offset has moved past the >= seed window entirely — continue into
+    # the wrapped (< seed) portion, adjusted for how far past we are.
+    wrapped_offset = offset - first_count
+    return base_query.filter(Reel.random_rank < seed) \
+                      .order_by(Reel.random_rank.asc()) \
+                      .offset(wrapped_offset).limit(limit).all()
 
 
 def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10, loop: int = 0):
@@ -384,10 +397,12 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
 
     if user_school:
         same_school = _rotating_query(
-            base.filter(User.school_name == user_school), seed_val, int(limit * 0.65)
+            base.filter(User.school_name == user_school), seed_val,
+            int(limit * 0.65), offset=int(skip * 0.65)
         )
         other_school = _rotating_query(
-            base.filter(User.school_name != user_school), seed_val, int(limit * 0.35)
+            base.filter(User.school_name != user_school), seed_val,
+            int(limit * 0.35), offset=int(skip * 0.35)
         )
         reels, s, o = [], 0, 0
         for i in range(limit):
@@ -398,7 +413,7 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
             elif o < len(other_school):
                 reels.append(other_school[o]); o += 1
     else:
-        reels = _rotating_query(base, seed_val, limit)
+        reels = _rotating_query(base, seed_val, limit, offset=skip)
 
     return _build_feed_response(db, reels, current_user_id)
 
