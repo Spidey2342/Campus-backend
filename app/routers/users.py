@@ -126,7 +126,7 @@ async def edit_profile(
 ):
     if full_name: current_user.full_name = full_name
     if bio: current_user.bio = bio
-    if school_name: current_user.school_name = school_name
+    if school_name: current_user.school_name = " ".join(school_name.split())
     if programme: current_user.programme = programme
     if year_of_study: current_user.year_of_study = year_of_study
 
