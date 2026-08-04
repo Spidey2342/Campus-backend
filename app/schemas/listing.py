@@ -26,6 +26,7 @@ class ListingResponse(BaseModel):
     photos: List[str] = []
     school_name: Optional[str] = None
     status: str
+    is_featured: bool = False
     created_at: datetime
     seller: SellerSummary
 

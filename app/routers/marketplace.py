@@ -1,24 +1,29 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, case, and_
 from typing import Optional, List
+from datetime import datetime, timedelta, timezone
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from pydantic import BaseModel
 from app.database import get_db
 from app.routers.auth import get_current_user
 from app.models.user import User
-from app.models.reel import Listing, Conversation, ConversationMember, Message
+from app.models.reel import Listing, Conversation, ConversationMember, Message, FeatureOrder
 from app.schemas.listing import ListingResponse, SellerStatusResponse, CATEGORIES
 from app.services.marketplace_service import (
     upload_listing_photo, encode_photo_urls, decode_photo_urls,
     get_seller_status, start_seller_trial,
     MAX_LISTING_PHOTOS, MAX_PHOTO_SIZE_BYTES,
 )
+from app.services import paystack_service
 from app.routers.messages import get_conversation_detail
+import os
 
 router = APIRouter(prefix="/marketplace", tags=["Marketplace"])
 limiter = Limiter(key_func=get_remote_address)
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://campus-loop-peach.vercel.app")
 
 
 def require_admin(current_user: User):
@@ -37,6 +42,7 @@ def _serialize(listing: Listing) -> dict:
         "photos": decode_photo_urls(listing.photo_urls),
         "school_name": listing.school_name,
         "status": listing.status,
+        "is_featured": listing.is_currently_featured(),
         "created_at": listing.created_at,
         "seller": listing.seller,
     }
@@ -130,8 +136,14 @@ def get_listings(
             (Listing.title.ilike(like)) | (Listing.description.ilike(like))
         )
 
+    now = datetime.now(timezone.utc)
+    featured_rank = case(
+        (and_(Listing.is_featured == True, Listing.featured_until > now), 0),
+        else_=1,
+    )
+
     listings = (
-        query.order_by(desc(Listing.created_at))
+        query.order_by(featured_rank, desc(Listing.created_at))
         .offset(skip).limit(min(limit, 50))
         .all()
     )
@@ -362,3 +374,166 @@ def start_listing_chat(
     db.commit()
 
     return get_conversation_detail(db, conv, current_user.id)
+
+
+# --- FEATURED LISTINGS (Paystack) ---
+# Pin a listing to the top of the marketplace feed for a paid, fixed number
+# of days. Flow: frontend calls /feature/initialize -> gets a Paystack
+# hosted checkout URL -> redirects the browser there -> Paystack redirects
+# back to the frontend's callback page with ?reference=... -> frontend calls
+# /payments/verify/{reference}. The /payments/webhook endpoint is a second,
+# independent path to the same result, in case the user closes the tab
+# before the frontend gets to call verify.
+
+@router.get("/feature-pricing")
+def feature_pricing():
+    return {
+        "currency": "GHS",
+        "options": [
+            {"duration_days": days, "amount": amount}
+            for days, amount in paystack_service.FEATURE_PRICING.items()
+        ],
+    }
+
+
+class FeatureInitRequest(BaseModel):
+    duration_days: int
+
+
+@router.post("/listings/{listing_id}/feature/initialize")
+def initialize_feature_payment(
+    listing_id: str,
+    body: FeatureInitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing.seller_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your listing")
+    if listing.status != "active":
+        raise HTTPException(status_code=400, detail="Only active listings can be featured")
+
+    amount = paystack_service.FEATURE_PRICING.get(body.duration_days)
+    if amount is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duration must be one of: {', '.join(str(d) for d in paystack_service.FEATURE_PRICING)} days",
+        )
+
+    order = FeatureOrder(
+        listing_id=listing.id,
+        seller_id=current_user.id,
+        duration_days=body.duration_days,
+        amount=amount,
+        paystack_reference=f"feat_{listing.id[:8]}_{int(datetime.now(timezone.utc).timestamp())}",
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+
+    try:
+        paystack_data = paystack_service.initialize_transaction(
+            email=current_user.email,
+            amount_ghs=amount,
+            reference=order.paystack_reference,
+            callback_url=f"{FRONTEND_URL}/marketplace/payment/callback",
+            metadata={"listing_id": listing.id, "feature_order_id": order.id},
+        )
+    except Exception as e:
+        order.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Could not start payment: {str(e)}")
+
+    return {
+        "authorization_url": paystack_data["authorization_url"],
+        "reference": order.paystack_reference,
+        "amount": amount,
+        "duration_days": body.duration_days,
+    }
+
+
+def _apply_successful_feature_order(db: Session, order: FeatureOrder) -> None:
+    """Shared by both the frontend-triggered verify call and the webhook —
+    idempotent, safe to call twice for the same order."""
+    if order.status == "success":
+        return  # already applied — avoid double-extending featured_until
+
+    order.status = "success"
+    order.verified_at = datetime.now(timezone.utc)
+
+    listing = db.query(Listing).filter(Listing.id == order.listing_id).first()
+    if listing:
+        # If it's already featured (e.g. a top-up before the old boost
+        # expired), extend from whichever is later — now, or the existing
+        # expiry — rather than overwriting a still-active boost.
+        base = listing.featured_until if (listing.featured_until and listing.featured_until > datetime.now(timezone.utc)) else datetime.now(timezone.utc)
+        listing.is_featured = True
+        listing.featured_until = base + timedelta(days=order.duration_days)
+
+    db.commit()
+
+
+@router.post("/payments/verify/{reference}")
+def verify_feature_payment(
+    reference: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    order = db.query(FeatureOrder).filter(FeatureOrder.paystack_reference == reference).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if order.seller_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your payment")
+
+    if order.status == "success":
+        listing = db.query(Listing).filter(Listing.id == order.listing_id).first()
+        return {"status": "success", "listing": _serialize(listing) if listing else None}
+
+    try:
+        result = paystack_service.verify_transaction(reference)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not verify payment: {str(e)}")
+
+    if result.get("status") == "success":
+        # Cross-check the amount actually charged matches what we expected
+        # (Paystack amounts are in pesewas) before trusting it.
+        expected_pesewas = int(round(order.amount * 100))
+        if result.get("amount") != expected_pesewas:
+            order.status = "failed"
+            db.commit()
+            raise HTTPException(status_code=400, detail="Payment amount mismatch")
+
+        _apply_successful_feature_order(db, order)
+        listing = db.query(Listing).filter(Listing.id == order.listing_id).first()
+        return {"status": "success", "listing": _serialize(listing) if listing else None}
+
+    order.status = "failed"
+    db.commit()
+    return {"status": order.status}
+
+
+@router.post("/payments/webhook")
+async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Public endpoint (no auth — Paystack calls this, not the app). Protected
+    instead by verifying the HMAC signature Paystack sends. This is a
+    backup confirmation path: the frontend's own verify call after redirect
+    is the primary one, but a user closing the tab mid-payment would
+    otherwise leave a successful charge un-applied without this.
+    """
+    raw_body = await request.body()
+    signature = request.headers.get("x-paystack-signature", "")
+
+    if not paystack_service.verify_webhook_signature(raw_body, signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    payload = await request.json()
+    if payload.get("event") == "charge.success":
+        reference = payload.get("data", {}).get("reference")
+        order = db.query(FeatureOrder).filter(FeatureOrder.paystack_reference == reference).first()
+        if order:
+            _apply_successful_feature_order(db, order)
+
+    return {"received": True}

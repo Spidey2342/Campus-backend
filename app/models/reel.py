@@ -125,10 +125,50 @@ class Listing(Base):
     school_name = Column(String(200), nullable=True)  # snapshot from seller at post time
     status = Column(String(20), default="active")  # "active" | "sold" | "removed"
 
+    # Featured Listings — a paid, time-limited boost that sorts this listing
+    # to the top of the marketplace feed. See FeatureOrder below for the
+    # payment record; these two columns are just the "is it live right now"
+    # state, kept simple on purpose so no background job is required —
+    # listings/get_listings treats a listing as featured only while
+    # featured_until is still in the future (see is_currently_featured()).
+    is_featured = Column(Boolean, default=False)
+    featured_until = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     seller = relationship("User")
+
+    def is_currently_featured(self) -> bool:
+        if not self.is_featured or not self.featured_until:
+            return False
+        from datetime import datetime, timezone
+        return self.featured_until > datetime.now(timezone.utc)
+
+
+class FeatureOrder(Base):
+    """
+    A payment record for boosting a listing to the top of the feed for
+    `duration_days`. One row per Paystack transaction attempt — including
+    abandoned/failed ones, kept for a clean audit trail rather than deleted.
+    """
+    __tablename__ = "feature_orders"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    listing_id = Column(String, ForeignKey("listings.id", ondelete="CASCADE"), nullable=False)
+    seller_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    duration_days = Column(Integer, nullable=False)
+    amount = Column(Float, nullable=False)  # in GHS (major unit, not pesewas)
+    currency = Column(String(6), default="GHS")
+
+    paystack_reference = Column(String(120), unique=True, nullable=False)
+    status = Column(String(20), default="pending")  # "pending" | "success" | "failed"
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+
+    listing = relationship("Listing")
 
 
 class Conversation(Base):
