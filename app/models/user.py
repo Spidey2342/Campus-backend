@@ -31,6 +31,11 @@ class User(Base):
     # NULL         — not a seller; can browse/buy but "+" routes to become-seller
     seller_source = Column(String(20), nullable=True)
     seller_trial_ends_at = Column(DateTime(timezone=True), nullable=True)
+    # Shown to buyers as a "Chat on WhatsApp" shortcut on listing pages.
+    # Stored as entered (digits, optionally with a leading +) — normalized
+    # into wa.me link format on read, not on write, so we never lose
+    # whatever format the vendor actually typed.
+    whatsapp_number = Column(String(20), nullable=True)
 
     avatar_url = Column(String, nullable=True)
     fcm_token = Column(String, nullable=True)  # 👈 just the column, no route

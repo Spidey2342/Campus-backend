@@ -76,6 +76,38 @@ def become_seller(
     return status
 
 
+# --- WHATSAPP CONTACT ---
+# Lets a vendor add a WhatsApp number buyers can reach them on directly from
+# a listing page, as an alternative to the in-app chat.
+
+class WhatsappUpdateRequest(BaseModel):
+    whatsapp_number: Optional[str] = None  # None/"" clears it
+
+
+@router.get("/whatsapp")
+def get_my_whatsapp(current_user: User = Depends(get_current_user)):
+    return {"whatsapp_number": current_user.whatsapp_number}
+
+
+@router.put("/whatsapp")
+def set_my_whatsapp(
+    body: WhatsappUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    number = (body.whatsapp_number or "").strip()
+    if number:
+        digits_only = number.replace("+", "").replace(" ", "").replace("-", "")
+        if not digits_only.isdigit() or not (9 <= len(digits_only) <= 15):
+            raise HTTPException(status_code=400, detail="That doesn't look like a valid phone number")
+        current_user.whatsapp_number = number
+    else:
+        current_user.whatsapp_number = None
+
+    db.commit()
+    return {"whatsapp_number": current_user.whatsapp_number}
+
+
 # --- ADMIN: grant free seller status by hand ---
 
 @router.post("/admin/grant-seller/{username}", response_model=SellerStatusResponse)

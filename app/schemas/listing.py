@@ -11,6 +11,7 @@ class SellerSummary(BaseModel):
     full_name: str
     avatar_url: Optional[str] = None
     is_verified: bool = False
+    whatsapp_number: Optional[str] = None
 
     class Config:
         from_attributes = True

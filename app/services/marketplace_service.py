@@ -48,16 +48,23 @@ def decode_photo_urls(raw: str) -> list:
 
 def get_seller_status(user: User) -> dict:
     """Single source of truth for whether a user can post listings.
-    Mirrors the shape the frontend's mock getSellerStatus() already expects."""
-    if user.seller_source in ("admin_free", "paid"):
+    Mirrors the shape the frontend's mock getSellerStatus() already expects.
+
+    seller_trial_ends_at doubles as a general "seller access expires at"
+    field, not just for the self-serve trial — it's also used for manually
+    granted "paid" access (e.g. a one-month comp granted directly in the
+    database) so those can expire on their own instead of being permanent.
+    Leave it NULL for a "paid" grant to make it never expire.
+    """
+    if user.seller_source == "admin_free":
         return {
             "is_seller": True,
-            "source": user.seller_source,
+            "source": "admin_free",
             "trial_ends_at": None,
             "days_left": None,
         }
 
-    if user.seller_source == "trial" and user.seller_trial_ends_at:
+    if user.seller_source in ("trial", "paid") and user.seller_trial_ends_at:
         expires = user.seller_trial_ends_at
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
@@ -67,9 +74,18 @@ def get_seller_status(user: User) -> dict:
 
         return {
             "is_seller": seconds_left > 0,
-            "source": "trial",
+            "source": user.seller_source,
             "trial_ends_at": user.seller_trial_ends_at,
             "days_left": days_left,
+        }
+
+    if user.seller_source == "paid":
+        # "paid" with no expiry set — treated as permanent, same as admin_free.
+        return {
+            "is_seller": True,
+            "source": "paid",
+            "trial_ends_at": None,
+            "days_left": None,
         }
 
     return {"is_seller": False, "source": None, "trial_ends_at": None, "days_left": None}
