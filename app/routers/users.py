@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from typing import Optional
 from app.database import get_db
 from app.routers.auth import get_current_user
@@ -255,3 +256,75 @@ def grant_founding_member(
     user.is_founding_member = True
     db.commit()
     return {"message": f"@{username} is now a founding member"}
+
+
+# --- ONBOARDING ---
+# Runs once, right after signup: confirm school (reuses the existing
+# /profile/edit endpoint below, since school_name is already a field on
+# it — no new endpoint needed for that part) + suggest people to follow.
+
+@router.get("/onboarding/suggestions")
+def get_onboarding_suggestions(
+    limit: int = 12,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    already_following_ids = {
+        f.following_id for f in
+        db.query(Follow).filter(Follow.follower_id == current_user.id).all()
+    }
+    exclude_ids = already_following_ids | {current_user.id}
+
+    suggestions = []
+
+    # Prioritize people at the same school — most relevant, most likely to
+    # actually be recognized/followed back.
+    if current_user.school_name:
+        same_school = (
+            db.query(User)
+            .filter(
+                User.school_name == current_user.school_name,
+                User.id.notin_(exclude_ids),
+                User.is_active == True,
+            )
+            .order_by(desc(User.is_founding_member), desc(User.created_at))
+            .limit(limit)
+            .all()
+        )
+        suggestions.extend(same_school)
+
+    # Fill any remaining slots with active users from anywhere — keeps the
+    # screen from looking sparse for early adopters at a new/small school.
+    if len(suggestions) < limit:
+        exclude_ids |= {u.id for u in suggestions}
+        fill = (
+            db.query(User)
+            .filter(User.id.notin_(exclude_ids), User.is_active == True)
+            .order_by(desc(User.is_founding_member), desc(User.created_at))
+            .limit(limit - len(suggestions))
+            .all()
+        )
+        suggestions.extend(fill)
+
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "full_name": u.full_name,
+            "avatar_url": u.avatar_url,
+            "school_name": u.school_name,
+            "is_verified": u.is_verified,
+            "is_founding_member": u.is_founding_member,
+        }
+        for u in suggestions
+    ]
+
+
+@router.post("/onboarding/complete")
+def complete_onboarding(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.has_completed_onboarding = True
+    db.commit()
+    return {"has_completed_onboarding": True}

@@ -54,6 +54,7 @@ class UserResponse(BaseModel):
     is_verified: bool
     is_admin: bool = False
     is_founding_member: bool = False
+    has_completed_onboarding: bool = False
     created_at: datetime
 
     # This tells Pydantic to read data from SQLAlchemy objects

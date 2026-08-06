@@ -37,6 +37,11 @@ class User(Base):
     # whatever format the vendor actually typed.
     whatsapp_number = Column(String(20), nullable=True)
 
+    # Drives the one-time post-signup flow (school confirm + follow
+    # suggestions). Defaults False for new signups; existing users get
+    # backfilled to True in the migration so they're never sent through it.
+    has_completed_onboarding = Column(Boolean, default=False)
+
     avatar_url = Column(String, nullable=True)
     fcm_token = Column(String, nullable=True)  # 👈 just the column, no route
     reset_token = Column(String, nullable=True)
