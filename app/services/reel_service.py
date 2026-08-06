@@ -317,6 +317,16 @@ def _build_feed_response(db: Session, reels: list, current_user_id: str) -> list
         ).all()
     }
 
+    # One query for which of these owners the current user already follows
+    # — drives whether the "+" quick-follow badge shows on their avatar.
+    followed_owner_ids = {
+        f.following_id
+        for f in db.query(Follow).filter(
+            Follow.follower_id == current_user_id,
+            Follow.following_id.in_(owner_ids)
+        ).all()
+    }
+
     result = []
     for reel in reels:
         owner = owners.get(reel.owner_id)
@@ -336,6 +346,7 @@ def _build_feed_response(db: Session, reels: list, current_user_id: str) -> list
             "owner_avatar":    owner.avatar_url if owner else None,
             "owner_school":    owner.school_name if owner else None,
             "is_liked":        reel.id in liked_reel_ids,
+            "is_following_owner": reel.owner_id == current_user_id or reel.owner_id in followed_owner_ids,
         })
 
     return result

@@ -6,7 +6,7 @@ from slowapi.util import get_remote_address
 from app.database import get_db
 from app.routers.auth import get_current_user
 from app.models.user import User
-from app.models.reel import Reel, Like, Comment
+from app.models.reel import Reel, Like, Comment, Follow
 from app.schemas.reel import ReelResponse, CommentCreate, CommentResponse
 from app.services.reel_service import (
     upload_video_to_cloudinary,
@@ -267,6 +267,10 @@ def get_single_reel(
             Like.reel_id == reel.id,
             Like.user_id == current_user.id
         ).first() is not None
+        is_following_owner = reel.owner_id == current_user.id or db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == reel.owner_id
+        ).first() is not None
 
         return {
             "id": reel.id,
@@ -283,6 +287,7 @@ def get_single_reel(
             "owner_avatar": owner.avatar_url if owner else None,
             "owner_school": owner.school_name if owner else None,
             "is_liked": is_liked,
+            "is_following_owner": is_following_owner,
         }
     except HTTPException:
         raise
