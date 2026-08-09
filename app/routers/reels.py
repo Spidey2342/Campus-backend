@@ -99,11 +99,12 @@ def get_reel_feed(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=10, le=20),
     loop: int = Query(default=0, ge=0),
+    session_seed: str = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     try:
-        return get_feed(db, current_user.id, type, skip, limit, loop)
+        return get_feed(db, current_user.id, type, skip, limit, loop, session_seed)
     except Exception as e:
         import traceback
         traceback.print_exc()

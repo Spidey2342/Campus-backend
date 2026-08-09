@@ -11,6 +11,8 @@ import random
 import hashlib
 from datetime import date
 from sqlalchemy import func
+import re
+import urllib.parse
 
 load_dotenv()
 
@@ -20,6 +22,37 @@ cloudinary.config(
     api_key=os.getenv("CLOUDINARY_API_KEY"),
     api_secret=os.getenv("CLOUDINARY_API_SECRET"),
 )
+
+# Cloudinary's l_text overlay renders using an actual font (Arial here),
+# and standard fonts like Arial have no emoji glyphs. Cloudinary validates
+# this server-side and returns a hard 400 for the WHOLE transformation
+# chain if the text contains one — meaning one emoji in a caption breaks
+# the entire video/photo, not just the missing character. We strip emoji
+# out of overlay text before it's ever sent, so worst case an overlay
+# loses an emoji rather than the whole post failing to load.
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F300-\U0001F5FF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F700-\U0001F7FF"
+    "\U0001F800-\U0001F8FF"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA00-\U0001FAFF"
+    "\U00002600-\U000026FF"
+    "\U00002700-\U000027BF"
+    "\U0001F1E6-\U0001F1FF"
+    "\U00002B00-\U00002BFF"
+    "\U0000FE00-\U0000FE0F"
+    "\U0000200D"
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def _sanitize_overlay_text(raw: str) -> str:
+    stripped = _EMOJI_PATTERN.sub("", raw or "")
+    return re.sub(r"\s{2,}", " ", stripped).strip()
 
 def upload_video_to_cloudinary(
     file_bytes: bytes,
@@ -53,10 +86,13 @@ def upload_video_to_cloudinary(
             transforms.append(f"eo_{trim_end}")
 
         for overlay in text_overlays:
-            text  = overlay.get("text", "").replace(" ", "%20").replace(",", "%2C")
+            clean_text = _sanitize_overlay_text(overlay.get("text", ""))
+            if not clean_text:
+                continue  # e.g. the whole overlay was just an emoji — skip it rather than bake a broken layer
+            text_encoded = urllib.parse.quote(clean_text, safe="")
             size  = overlay.get("size", 24)
             color = overlay.get("color", "white").lstrip("#")
-            transforms.append(f"l_text:Arial_{size}_bold:{text},co_rgb:{color},g_center")
+            transforms.append(f"l_text:Arial_{size}_bold:{text_encoded},co_rgb:{color},g_center")
 
         transform_str = "/".join(transforms)
         if transform_str:
@@ -97,12 +133,15 @@ def upload_image_to_cloudinary(file_bytes: bytes, filename: str, text_overlays: 
         # Build text overlay transformations
         overlay_transformations = []
         for overlay in text_overlays:
+            clean_text = _sanitize_overlay_text(overlay.get("text", ""))
+            if not clean_text:
+                continue  # e.g. the whole overlay was just an emoji — skip it rather than bake a broken layer
             overlay_transformations.append({
                 "overlay": {
                     "font_family": "Arial",
                     "font_size": overlay.get("size", 24),
                     "font_weight": "bold",
-                    "text": overlay.get("text", ""),
+                    "text": clean_text,
                 },
                 "color": overlay.get("color", "#ffffff"),
                 "gravity": "center",
@@ -376,7 +415,7 @@ def _rotating_query(base_query, seed: float, limit: int, offset: int = 0):
                       .offset(wrapped_offset).limit(limit).all()
 
 
-def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10, loop: int = 0):
+def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip: int = 0, limit: int = 10, loop: int = 0, session_seed: str = None):
     if feed_type == "following":
         following_subq = (
             db.query(Follow.following_id)
@@ -393,8 +432,16 @@ def get_feed(db: Session, current_user_id: str, feed_type: str = "foryou", skip:
         )
         return _build_feed_response(db, reels, current_user_id)
 
-    # seed shifts once per day, and again every time you loop past the end
-    seed_str = f"{current_user_id}{date.today().isoformat()}{skip // 200}{loop}"
+    # The shuffle seed determines the whole ordering below. session_seed is
+    # a random value the frontend generates once per page load/refresh and
+    # sends on every request during that visit — so scrolling further
+    # (skip increasing) keeps a stable order within one sitting, but a
+    # fresh refresh gets a genuinely different shuffle, the way TikTok
+    # does. If the caller doesn't send one (older client, or a direct API
+    # call), we fall back to the old date-based seed so the feed still
+    # works, just without the per-refresh variety.
+    seed_source = session_seed or date.today().isoformat()
+    seed_str = f"{current_user_id}{seed_source}{skip // 200}{loop}"
     seed_hash = int(hashlib.md5(seed_str.encode()).hexdigest(), 16)
     seed_val = (seed_hash % 1000) / 1000.0  # float in [0, 1)
 
