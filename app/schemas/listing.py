@@ -11,6 +11,7 @@ class SellerSummary(BaseModel):
     full_name: str
     avatar_url: Optional[str] = None
     is_verified: bool = False
+    is_pro_seller: bool = False
     whatsapp_number: Optional[str] = None
 
     class Config:
@@ -28,6 +29,7 @@ class ListingResponse(BaseModel):
     school_name: Optional[str] = None
     status: str
     is_featured: bool = False
+    views_count: int = 0
     created_at: datetime
     seller: SellerSummary
 

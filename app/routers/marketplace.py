@@ -43,6 +43,7 @@ def _serialize(listing: Listing) -> dict:
         "school_name": listing.school_name,
         "status": listing.status,
         "is_featured": listing.is_currently_featured(),
+        "views_count": listing.views_count or 0,
         "created_at": listing.created_at,
         "seller": listing.seller,
     }
@@ -205,6 +206,12 @@ def get_listing(
     listing = db.query(Listing).filter(Listing.id == listing_id).first()
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
+
+    # Count real buyer interest, not the seller checking their own listing
+    if listing.seller_id != current_user.id:
+        listing.views_count = (listing.views_count or 0) + 1
+        db.commit()
+
     return _serialize(listing)
 
 
@@ -569,3 +576,128 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
             _apply_successful_feature_order(db, order)
 
     return {"received": True}
+
+
+# --- CAMPUS MARKET PRO: STOREFRONT ---
+# A storefront is just a richer public profile for an active seller —
+# banner, bio, hours, plus their live listings. Bundled into the same
+# "is_seller" status as everything else, not sold separately.
+
+def _serialize_store(seller: User, db: Session) -> dict:
+    listings = (
+        db.query(Listing)
+        .filter(Listing.seller_id == seller.id, Listing.status == "active")
+        .order_by(desc(Listing.created_at))
+        .all()
+    )
+    return {
+        "username": seller.username,
+        "store_name": seller.store_name or seller.full_name,
+        "store_banner_url": seller.store_banner_url,
+        "store_bio": seller.store_bio,
+        "store_hours": seller.store_hours,
+        "avatar_url": seller.avatar_url,
+        "school_name": seller.school_name,
+        "whatsapp_number": seller.whatsapp_number,
+        "is_pro_seller": seller.is_pro_seller,
+        "listings": [_serialize(l) for l in listings],
+    }
+
+
+@router.get("/store/{username}")
+def get_storefront(
+    username: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    seller = db.query(User).filter(User.username == username).first()
+    if not seller:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not seller.is_pro_seller:
+        raise HTTPException(status_code=404, detail="This user doesn't have a storefront")
+    return _serialize_store(seller, db)
+
+
+@router.put("/store")
+async def update_storefront(
+    store_name: Optional[str] = Form(None),
+    store_bio: Optional[str] = Form(None),
+    store_hours: Optional[str] = Form(None),
+    banner: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.is_pro_seller:
+        raise HTTPException(status_code=403, detail="Only active sellers have a storefront")
+
+    if store_name is not None:
+        current_user.store_name = store_name.strip() or None
+    if store_bio is not None:
+        current_user.store_bio = store_bio.strip() or None
+    if store_hours is not None:
+        current_user.store_hours = store_hours.strip() or None
+
+    if banner:
+        contents = await banner.read()
+        if len(contents) > MAX_PHOTO_SIZE_BYTES:
+            raise HTTPException(status_code=400, detail="Banner image too large")
+        current_user.store_banner_url = upload_listing_photo(contents)
+
+    db.commit()
+    return _serialize_store(current_user, db)
+
+
+@router.get("/store/analytics")
+def get_store_analytics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.is_pro_seller:
+        raise HTTPException(status_code=403, detail="Only active sellers have analytics")
+
+    listings = db.query(Listing).filter(Listing.seller_id == current_user.id).all()
+    listing_ids = [l.id for l in listings]
+
+    total_views = sum(l.views_count or 0 for l in listings)
+    total_whatsapp_clicks = sum(l.whatsapp_clicks or 0 for l in listings)
+    total_chats = (
+        db.query(Conversation)
+        .filter(Conversation.listing_id.in_(listing_ids))
+        .count()
+        if listing_ids else 0
+    )
+
+    return {
+        "total_views": total_views,
+        "total_whatsapp_clicks": total_whatsapp_clicks,
+        "total_chats_started": total_chats,
+        "per_listing": [
+            {
+                "id": l.id,
+                "title": l.title,
+                "views_count": l.views_count or 0,
+                "whatsapp_clicks": l.whatsapp_clicks or 0,
+            }
+            for l in sorted(listings, key=lambda l: l.views_count or 0, reverse=True)
+        ],
+    }
+
+
+@router.post("/listings/{listing_id}/track-click")
+def track_listing_click(
+    listing_id: str,
+    click_type: str = "whatsapp",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fire-and-forget from the frontend right before it navigates to an
+    external link (WhatsApp) that we'd otherwise have no visibility into
+    at all. Never blocks or errors out loud — a missed click ping
+    shouldn't be visible to the buyer.
+    """
+    listing = db.query(Listing).filter(Listing.id == listing_id).first()
+    if listing and click_type == "whatsapp":
+        listing.whatsapp_clicks = (listing.whatsapp_clicks or 0) + 1
+        db.commit()
+    return {"ok": True}

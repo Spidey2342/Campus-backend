@@ -134,6 +134,12 @@ class Listing(Base):
     is_featured = Column(Boolean, default=False)
     featured_until = Column(DateTime(timezone=True), nullable=True)
 
+    # Basic analytics (part of Campus Market Pro). Chat-starts aren't
+    # tracked here — they're just a COUNT of Conversation rows with this
+    # listing_id, no separate counter needed for those.
+    views_count = Column(Integer, default=0)
+    whatsapp_clicks = Column(Integer, default=0)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
