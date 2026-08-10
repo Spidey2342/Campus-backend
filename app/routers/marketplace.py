@@ -604,6 +604,47 @@ def _serialize_store(seller: User, db: Session) -> dict:
     }
 
 
+@router.get("/store/analytics")
+def get_store_analytics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.is_pro_seller:
+        raise HTTPException(status_code=403, detail="Only active sellers have analytics")
+
+    listings = db.query(Listing).filter(Listing.seller_id == current_user.id).all()
+    listing_ids = [l.id for l in listings]
+
+    total_views = sum(l.views_count or 0 for l in listings)
+    total_whatsapp_clicks = sum(l.whatsapp_clicks or 0 for l in listings)
+    total_chats = (
+        db.query(Conversation)
+        .filter(Conversation.listing_id.in_(listing_ids))
+        .count()
+        if listing_ids else 0
+    )
+
+    return {
+        "total_views": total_views,
+        "total_whatsapp_clicks": total_whatsapp_clicks,
+        "total_chats_started": total_chats,
+        "per_listing": [
+            {
+                "id": l.id,
+                "title": l.title,
+                "views_count": l.views_count or 0,
+                "whatsapp_clicks": l.whatsapp_clicks or 0,
+            }
+            for l in sorted(listings, key=lambda l: l.views_count or 0, reverse=True)
+        ],
+    }
+
+
+# NOTE: this dynamic route MUST be declared after /store/analytics (and
+# any other literal /store/... routes added in future) — FastAPI matches
+# routes in declaration order, so a {username} path param declared first
+# would swallow every literal path under /store/ before it ever reaches
+# the intended route (this is exactly what broke /store/analytics above).
 @router.get("/store/{username}")
 def get_storefront(
     username: str,
@@ -645,42 +686,6 @@ async def update_storefront(
 
     db.commit()
     return _serialize_store(current_user, db)
-
-
-@router.get("/store/analytics")
-def get_store_analytics(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    if not current_user.is_pro_seller:
-        raise HTTPException(status_code=403, detail="Only active sellers have analytics")
-
-    listings = db.query(Listing).filter(Listing.seller_id == current_user.id).all()
-    listing_ids = [l.id for l in listings]
-
-    total_views = sum(l.views_count or 0 for l in listings)
-    total_whatsapp_clicks = sum(l.whatsapp_clicks or 0 for l in listings)
-    total_chats = (
-        db.query(Conversation)
-        .filter(Conversation.listing_id.in_(listing_ids))
-        .count()
-        if listing_ids else 0
-    )
-
-    return {
-        "total_views": total_views,
-        "total_whatsapp_clicks": total_whatsapp_clicks,
-        "total_chats_started": total_chats,
-        "per_listing": [
-            {
-                "id": l.id,
-                "title": l.title,
-                "views_count": l.views_count or 0,
-                "whatsapp_clicks": l.whatsapp_clicks or 0,
-            }
-            for l in sorted(listings, key=lambda l: l.views_count or 0, reverse=True)
-        ],
-    }
 
 
 @router.post("/listings/{listing_id}/track-click")
