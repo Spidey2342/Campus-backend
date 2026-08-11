@@ -153,6 +153,30 @@ def send_message(
     db.commit()
     db.refresh(new_message)
 
+    # Notify everyone else in the conversation — this was the one trigger
+    # missing from the notification system entirely (likes/comments/follows
+    # all had it, messages never did).
+    from app.services.notification_service import create_notification
+    other_member_ids = [
+        m.user_id for m in
+        db.query(ConversationMember)
+        .filter(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id != current_user.id,
+        )
+        .all()
+    ]
+    preview = body.text.strip()[:60] + ("…" if len(body.text.strip()) > 60 else "")
+    for member_id in other_member_ids:
+        create_notification(
+            db=db,
+            recipient_id=member_id,
+            sender_id=current_user.id,
+            type="message",
+            message=f"@{current_user.username}: {preview}",
+            url=f"/messages/{conversation_id}",
+        )
+
     return {
         "id": new_message.id,
         "text": new_message.text,

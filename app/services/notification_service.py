@@ -10,7 +10,8 @@ def create_notification(
     sender_id: str,
     type: str,
     message: str,
-    reel_id: str = None
+    reel_id: str = None,
+    url: str = None,
 ):
     if recipient_id == sender_id:
         return
@@ -28,14 +29,15 @@ def create_notification(
     # Send push notification to recipient's device
     recipient = db.query(User).filter(User.id == recipient_id).first()
     if recipient and recipient.fcm_token:
-        # Build the URL to open when notification is tapped
-        url = f"/reel/{reel_id}" if reel_id else "/notifications"
+        # Explicit url wins (e.g. a chat thread) — otherwise fall back to
+        # the reel-based URL, or the notifications list as a last resort.
+        push_url = url or (f"/reel/{reel_id}" if reel_id else "/notifications")
 
         send_push_notification(
             fcm_token=recipient.fcm_token,
             title="CampusVibe",
             body=message,
-            url=url
+            url=push_url
         )
 
     return notification
