@@ -6,18 +6,28 @@ firebase_initialized = False
 def init_firebase():
     global firebase_initialized
     try:
-        cred_json = os.getenv("FIREBASE_CREDENTIALS")
-        if not cred_json:
-            print("FIREBASE_CREDENTIALS not set — push notifications disabled")
-            return
-
         # Import INSIDE the function so it only fails here, not on module load
         import firebase_admin
         from firebase_admin import credentials
 
+        # Preferred on hosts with short environment-variable length limits
+        # (e.g. AlwaysData) — point this at an uploaded service-account
+        # JSON file instead of pasting the whole JSON blob into an env var.
+        # Falls back to the raw-JSON env var for backward compatibility
+        # with hosts that don't have that limit (e.g. Render).
+        cred_file = os.getenv("FIREBASE_CREDENTIALS_FILE")
+        cred_json = os.getenv("FIREBASE_CREDENTIALS")
+
+        if not cred_file and not cred_json:
+            print("Firebase credentials not set (FIREBASE_CREDENTIALS_FILE or FIREBASE_CREDENTIALS) — push notifications disabled")
+            return
+
         if not firebase_admin._apps:
-            cred_dict = json.loads(cred_json)
-            cred = credentials.Certificate(cred_dict)
+            if cred_file:
+                cred = credentials.Certificate(cred_file)  # accepts a file path directly
+            else:
+                cred_dict = json.loads(cred_json)
+                cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred)
 
         firebase_initialized = True
